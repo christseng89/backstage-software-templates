@@ -15,7 +15,11 @@ spec:
         app: ${{values.app_name}}
     spec:
       containers:
-      - name: ${{values.app_name}}
-        image: christseng89/${{values.app_name}}:latest
-        ports:
-        - containerPort: 5000
+        - name: ${{values.app_name}}
+          # Smoke-test placeholder. Production deploys go via Helm chart + ArgoCD
+          # (charts/${{values.app_name}}/), which uses the short commit SHA tag
+          # rewritten by CI. To use these raw manifests directly, build & push
+          # an image first, then `sed -i "s|:CHANGE_ME|:<your-tag>|" k8s/deploy.yaml`.
+          image: christseng89/${{values.app_name}}:v2
+          ports:
+            - containerPort: 5000
