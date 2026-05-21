@@ -1,6 +1,6 @@
 replicaCount: 1
 image:
-  repository: ricardoandre9707/${{values.app_name}}
+  repository: christseng89/${{values.app_name}}
   pullPolicy: IfNotPresent
   tag: ${{values.app_name}}-${{values.app_env}}-latest
 imagePullSecrets: []

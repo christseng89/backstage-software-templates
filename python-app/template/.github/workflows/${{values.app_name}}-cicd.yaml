@@ -5,7 +5,7 @@ on:
     paths:
       - src/**
     branches:
-      - master
+      - main
 
 jobs:
   ci:
@@ -27,7 +27,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           push: true
-          tags: ricardoandre9707/${{values.app_name}}:${{ '${{ env.COMMIT_ID }}' }}
+          tags: christseng89/${{values.app_name}}:${{ '${{ env.COMMIT_ID }}' }}
     outputs:
       commit_id: ${{ '${{ env.COMMIT_ID }}' }}
 
@@ -81,7 +81,7 @@ jobs:
             --dest-namespace ${{values.app_env}} \
             --dest-server https://kubernetes.default.svc \
             --values values-${{values.app_env}}.yaml \
-            --revision master \
+            --revision main \
             --sync-policy manual \
             --sync-option CreateNamespace=true
 

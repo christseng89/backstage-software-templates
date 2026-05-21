@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: python-app
+  name: ${{values.app_name}}
   labels:
-    app: python-app
+    app: ${{values.app_name}}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: python-app
+      app: ${{values.app_name}}
   template:
     metadata:
       labels:
-        app: python-app
+        app: ${{values.app_name}}
     spec:
       containers:
-      - name: python-app
-        image: ricardoandre9707/python-app:v2
+      - name: ${{values.app_name}}
+        image: christseng89/${{values.app_name}}:latest
         ports:
         - containerPort: 5000

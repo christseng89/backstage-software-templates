@@ -1,9 +1,12 @@
 apiVersion: scaffolder.backstage.io/v1beta3
+
 kind: Template
+
 metadata:
   name: python-template
   title: Python flask template
   description: Provisions a minimalistic flask application
+
 spec:
   owner: development
   type: service
@@ -19,10 +22,13 @@ spec:
           type: string
           description: Provide a component (microservice) name
           pattern: "^([a-zA-Z][a-zA-Z0-9]*)(-[a-zA-Z0-9]+)*$"
+          ui:autofocus: true
+          ui:help: "Use kebab-case, e.g. my-service"
         environment:
           title: Environment
           type: string
           description: The environment where this component will be deployed
+          ui:help: "Select the target deployment environment"
           enum:
             - dev
             - prod
@@ -34,8 +40,8 @@ spec:
       input:
         url: ./template
         values:
-          app_name: ${{parameters.component_id}}
-          app_env: ${{parameters.environment}}
+          app_name: ${{ parameters.component_id }}
+          app_env: ${{ parameters.environment }}
 
     - id: publish
       name: Publish
@@ -44,7 +50,8 @@ spec:
         allowedHosts:
           - github.com
         description: This is ${{ parameters.component_id }}
-        repoUrl: github.com?owner=christseng89&repo=${{parameters.component_id}}
+        repoUrl: github.com?owner=christseng89&repo=${{ parameters.component_id }}
+        defaultBranch: main
         protectDefaultBranch: false
         repoVisibility: public
 
@@ -59,3 +66,6 @@ spec:
     links:
       - title: Repository
         url: ${{ steps['publish'].output.remoteUrl }}
+      - title: Open in Catalog
+        icon: catalog
+        url: ${{ steps['register'].output.entityRef }}
