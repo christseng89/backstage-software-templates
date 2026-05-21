@@ -31,6 +31,7 @@ spec:
           ui:help: "Select the target deployment environment"
           enum:
             - dev
+            - staging
             - prod
 
   steps:
