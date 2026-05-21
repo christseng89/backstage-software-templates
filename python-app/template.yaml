@@ -48,8 +48,6 @@ spec:
       name: Publish
       action: publish:github
       input:
-        allowedHosts:
-          - github.com
         description: This is ${{ parameters.component_id }}
         repoUrl: github.com?owner=christseng89&repo=${{ parameters.component_id }}
         defaultBranch: main
