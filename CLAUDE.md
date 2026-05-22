@@ -18,8 +18,9 @@ Each template lives in its own directory (e.g., `python-app/`) with this layout:
     ├── charts/             # Helm chart (multi-env values files)
     ├── k8s/                # Raw Kubernetes manifests
     ├── src/                # Application source
-    ├── catalog-info.yaml   # Backstage catalog registration
-    └── runnerdeployment.yaml  # GitHub Actions self-hosted runner (applied manually to k8s)
+    ├── catalog-info.yaml      # Backstage catalog registration
+    ├── runnerdeployment.yaml  # GitHub Actions self-hosted runner (applied manually to k8s)
+    └── README.md              # Post-scaffolding manual steps (uses ${{values.app_name}})
 ```
 
 ## Template Variable Syntax
