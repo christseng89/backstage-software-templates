@@ -1,10 +1,36 @@
 # ${{values.app_name}}
 
-After this repo is scaffolded, three manual steps are required before CI/CD will work.
+This repo was scaffolded from the `python-app` Backstage template. Four manual steps
+are required before CI/CD will work.
+
+---
+
+## What Was Created
+
+```
+christseng89/${{values.app_name}}/
+├── .github/workflows/
+│   ├── ${{values.app_name}}-cicd.yaml    ← CI + deploy to dev (auto on src/ push)
+│   ├── ${{values.app_name}}-cd.yaml      ← promote staging/prod (auto on values file change)
+│   └── mirror-cli-binaries.yaml          ← mirror tool binaries to Docker Hub (manual)
+├── charts/${{values.app_name}}/
+│   ├── values.yaml                        ← base Helm defaults
+│   ├── values-dev.yaml                    ← image.tag written by cicd.yaml automatically
+│   ├── values-staging.yaml                ← set image.tag here to promote to staging
+│   ├── values-prod.yaml                   ← set image.tag here to promote to prod
+│   └── templates/                         ← Deployment, Service, Ingress
+├── src/                                   ← application source code
+├── Dockerfile
+├── catalog-info.yaml                      ← Backstage component registration
+├── runnerdeployment.yaml                  ← ARC self-hosted runner spec
+└── mkdocs.yaml + docs/                    ← TechDocs source
+```
+
+---
 
 ## Post-Scaffolding Steps
 
-### 1. Register the Self-Hosted Runner
+### Step 1 — Register the Self-Hosted Runner
 
 Apply the runner deployment to your local Docker Desktop Kubernetes cluster:
 
@@ -13,9 +39,20 @@ kubectl config use-context docker-desktop
 kubectl apply -f runnerdeployment.yaml
 ```
 
-### 2. Pre-configure ArgoCD Apps (one-time)
+### Step 2 — Mirror CLI Binaries to Docker Hub
 
-Three ArgoCD apps must exist before the first CD run. Each points to this repo
+Run once to push `argocd` and `yq` binaries to Docker Hub before the first CD run.
+Skip if the mirrors already exist from a previous repo on the same versions.
+
+```
+GitHub → ${{values.app_name}} → Actions → mirror-cli-binaries → Run workflow
+  argocd_version: v3.4.2
+  yq_version:     v4.44.3
+```
+
+### Step 3 — Pre-configure ArgoCD Apps
+
+Three ArgoCD apps must be created before the first CD run. Each points to this repo
 with a different values file and target namespace:
 
 | ArgoCD app | Namespace | Values file |
@@ -24,12 +61,7 @@ with a different values file and target namespace:
 | `${{values.app_name}}-staging` | `staging` | `charts/${{values.app_name}}/values-staging.yaml` |
 | `${{values.app_name}}-prod` | `prod` | `charts/${{values.app_name}}/values-prod.yaml` |
 
-**Pipeline behaviour after setup:**
-- Push to `main` (via `src/**` change) → auto-deploys to **dev** (`${{values.app_name}}-dev.test.com`)
-- Promote to staging: edit `values-staging.yaml`, set `image.tag`, commit → auto-deploys to `${{values.app_name}}-staging.test.com`
-- Promote to prod: edit `values-prod.yaml`, set `image.tag`, commit → auto-deploys to `${{values.app_name}}-prod.test.com`
-
-### 3. Set GitHub Actions Secrets
+### Step 4 — Set GitHub Actions Secrets
 
 Load your secrets from a local `.env` file and push them to this repo:
 
@@ -43,10 +75,56 @@ gh secret list --repo christseng89/${{values.app_name}}
 
 > `source .env` is Bash-only — run these commands in Git Bash or WSL on Windows.
 
-### Expected `.env` format
-
 ```env
 DOCKERHUB_USERNAME=your-username
 DOCKERHUB_TOKEN=your-token
-ARGOCD_PASSWORD=your-argocd-password
+ARGOCD_PASSWORD=your-argocd-admin-password
 ```
+
+---
+
+## Normal Workflow After Setup
+
+### Dev — automatic on every source push
+
+```
+Push any change under src/ to main
+  → cicd.yaml builds christseng89/${{values.app_name}}:<sha>
+  → writes <sha> into values-dev.yaml
+  → ArgoCD syncs ${{values.app_name}}-dev
+  → accessible at ${{values.app_name}}-dev.test.com
+```
+
+### Staging — promote by editing values-staging.yaml
+
+```yaml
+# charts/${{values.app_name}}/values-staging.yaml
+image:
+  tag: a1b2c3    ← set to the image tag tested in dev, then commit to main
+```
+
+```
+Commit values-staging.yaml
+  → cd.yaml triggers automatically
+  → ArgoCD syncs ${{values.app_name}}-staging
+  → accessible at ${{values.app_name}}-staging.test.com
+```
+
+### Prod — promote by editing values-prod.yaml
+
+```yaml
+# charts/${{values.app_name}}/values-prod.yaml
+image:
+  tag: a1b2c3    ← set to the image tag validated in staging, then commit to main
+```
+
+```
+Commit values-prod.yaml
+  → cd.yaml triggers automatically
+  → ArgoCD syncs ${{values.app_name}}-prod
+  → accessible at ${{values.app_name}}-prod.test.com
+```
+
+> The image tag is the first 6 characters of the Git commit SHA (e.g. `a1b2c3`).
+> Find available tags on Docker Hub under `christseng89/${{values.app_name}}`,
+> or read `values-dev.yaml` to see what is currently running in dev.
