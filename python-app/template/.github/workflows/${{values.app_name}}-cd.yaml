@@ -114,7 +114,7 @@ jobs:
           fi
           /tmp/argocd version --client
 
-      - name: ArgoCD app sync
+      - name: ArgoCD app ensure and sync
         if: steps.validate.outputs.skip != 'true'
         shell: bash
         run: |
@@ -125,6 +125,18 @@ jobs:
             --grpc-web \
             --username admin \
             --password "${{ '${{ secrets.ARGOCD_PASSWORD }}' }}"
+
+          # Create the app if it does not exist; --upsert makes this idempotent.
+          /tmp/argocd app create "$ARGOCD_APP" \
+            --upsert \
+            --repo "${{ '${{ github.server_url }}' }}/${{ '${{ github.repository }}' }}.git" \
+            --path "charts/${{values.app_name}}" \
+            --dest-server https://kubernetes.default.svc \
+            --dest-namespace "$DEPLOY_ENV" \
+            --values "values-${DEPLOY_ENV}.yaml" \
+            --project default \
+            --revision HEAD
+
           /tmp/argocd app sync ${{ '${{ env.ARGOCD_APP }}' }}
           /tmp/argocd app wait ${{ '${{ env.ARGOCD_APP }}' }} --health --timeout 180
 

@@ -1,7 +1,8 @@
 # ${{values.app_name}}
 
-This repo was scaffolded from the `python-app` Backstage template. Four manual steps
-are required before CI/CD will work.
+This repo was scaffolded from the `python-app` Backstage template. Three manual steps
+are required before CI/CD will work. ArgoCD apps are created automatically on the
+first successful pipeline run.
 
 ---
 
@@ -50,18 +51,7 @@ GitHub → ${{values.app_name}} → Actions → mirror-cli-binaries → Run work
   yq_version:     v4.44.3
 ```
 
-### Step 3 — Pre-configure ArgoCD Apps
-
-Three ArgoCD apps must be created before the first CD run. Each points to this repo
-with a different values file and target namespace:
-
-| ArgoCD app | Namespace | Values file |
-|---|---|---|
-| `${{values.app_name}}-dev` | `dev` | `charts/${{values.app_name}}/values-dev.yaml` |
-| `${{values.app_name}}-staging` | `staging` | `charts/${{values.app_name}}/values-staging.yaml` |
-| `${{values.app_name}}-prod` | `prod` | `charts/${{values.app_name}}/values-prod.yaml` |
-
-### Step 4 — Set GitHub Actions Secrets
+### Step 3 — Set GitHub Actions Secrets
 
 Load your secrets from a local `.env` file and push them to this repo:
 

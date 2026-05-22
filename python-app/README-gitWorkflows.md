@@ -88,7 +88,7 @@ Runs on `[self-hosted, linux]` (ARC runner pod in-cluster).
 | Update dev values file | Runs `yq -i '.image.tag = "<commit_id>"' values-dev.yaml` |
 | Commit changes | Pushes updated `values-dev.yaml` to `main` with `--rebase --autostash` |
 | Cache + install ArgoCD CLI | Same mirror pattern as yq; cold run ~5–10 min, cached <1 s |
-| ArgoCD app sync | Logs in with `--plaintext` and runs `argocd app sync <app_name>-dev` + `app wait --health --timeout 180` |
+| ArgoCD app ensure and sync | Logs in; runs `argocd app create --upsert` to create `<app_name>-dev` if it does not exist; then `app sync` + `app wait --health --timeout 180` |
 | Diagnose on failure | Dumps app state, pod events, and logs when any step above fails |
 
 ### Concurrency
@@ -146,7 +146,7 @@ Runs on `[self-hosted, linux]` (ARC runner pod in-cluster).
 | Validate image tag | Reads `.image.tag` from the values file. If empty, prints a notice and skips all deployment steps |
 | Detect runner architecture | Sets `amd64` or `arm64` |
 | Cache + install ArgoCD CLI | Same Docker Hub mirror pattern as `cicd.yaml` |
-| ArgoCD app sync | Logs in and runs `argocd app sync <app_name>-<env>` + `app wait --health --timeout 180` |
+| ArgoCD app ensure and sync | Logs in; runs `argocd app create --upsert` to create `<app_name>-<env>` if it does not exist; then `app sync` + `app wait --health --timeout 180` |
 | Diagnose on failure | Dumps app state, pods, and logs — skipped if image tag was empty |
 
 ### Concurrency

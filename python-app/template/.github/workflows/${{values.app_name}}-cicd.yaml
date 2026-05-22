@@ -166,7 +166,7 @@ jobs:
           fi
           /tmp/argocd version --client
 
-      - name: ArgoCD app sync
+      - name: ArgoCD app ensure and sync
         shell: bash
         run: |
           # --plaintext: argocd-server has `server.insecure: true`, so the
@@ -176,6 +176,18 @@ jobs:
             --grpc-web \
             --username admin \
             --password "${{ '${{ secrets.ARGOCD_PASSWORD }}' }}"
+
+          # Create the app if it does not exist; --upsert makes this idempotent.
+          /tmp/argocd app create ${{ '${{ env.ARGOCD_APP }}' }} \
+            --upsert \
+            --repo "${{ '${{ github.server_url }}' }}/${{ '${{ github.repository }}' }}.git" \
+            --path "charts/${{values.app_name}}" \
+            --dest-server https://kubernetes.default.svc \
+            --dest-namespace dev \
+            --values values-dev.yaml \
+            --project default \
+            --revision HEAD
+
           /tmp/argocd app sync ${{ '${{ env.ARGOCD_APP }}' }}
           /tmp/argocd app wait ${{ '${{ env.ARGOCD_APP }}' }} --health --timeout 180
 
