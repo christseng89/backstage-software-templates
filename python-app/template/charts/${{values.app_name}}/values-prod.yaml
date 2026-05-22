@@ -1,5 +1,15 @@
 replicaCount: 3
 
+image:
+  tag: ""
+
+ingress:
+  hosts:
+    - host: ${{values.app_name}}-prod.test.com
+      paths:
+        - path: /
+          pathType: Prefix
+
 resources:
   requests:
     cpu: 60m

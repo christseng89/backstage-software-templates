@@ -15,7 +15,6 @@ spec:
     - title: Fill in some steps
       required:
         - component_id
-        - environment
       properties:
         component_id:
           title: Component name
@@ -24,15 +23,17 @@ spec:
           pattern: "^([a-zA-Z][a-zA-Z0-9]*)(-[a-zA-Z0-9]+)*$"
           ui:autofocus: true
           ui:help: "Use kebab-case, e.g. my-service"
-        environment:
-          title: Environment
+        repoVisibility:
+          title: Repository visibility
           type: string
-          description: The environment where this component will be deployed
-          ui:help: "Select the target deployment environment"
+          description: "Private: source code hidden from public. Public: development only."
+          default: private
           enum:
-            - dev
-            - staging
-            - prod
+            - private
+            - public
+          enumNames:
+            - "Private (recommended)"
+            - "Public (dev only)"
 
   steps:
     - id: fetch-base
@@ -42,7 +43,6 @@ spec:
         url: ./template
         values:
           app_name: ${{ parameters.component_id }}
-          app_env: ${{ parameters.environment }}
 
     - id: publish
       name: Publish
@@ -52,7 +52,7 @@ spec:
         repoUrl: github.com?owner=christseng89&repo=${{ parameters.component_id }}
         defaultBranch: main
         protectDefaultBranch: false
-        repoVisibility: public
+        repoVisibility: ${{ parameters.repoVisibility }}
 
     - id: register
       name: Register

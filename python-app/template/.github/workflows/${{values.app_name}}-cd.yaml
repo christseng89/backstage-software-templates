@@ -1,0 +1,145 @@
+name: ${{values.app_name}}-cd
+
+on:
+  push:
+    paths:
+      - charts/${{values.app_name}}/values-staging.yaml
+      - charts/${{values.app_name}}/values-prod.yaml
+    branches:
+      - main
+  # Manual re-sync without a file change (e.g. after ArgoCD app was out of sync).
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to re-sync (image tag already set in values file)'
+        required: true
+        type: choice
+        options:
+          - staging
+          - prod
+
+# Serialize runs per ref so two quick commits don't race on the same env.
+concurrency:
+  group: cd-${{ '${{ github.event.inputs.environment }}' }}-${{ '${{ github.ref }}' }}
+  cancel-in-progress: false
+
+# Read-only — no commit back needed; the values file is already updated.
+permissions:
+  contents: read
+
+env:
+  ARGOCD_VERSION: v3.4.2
+  ARGOCD_SERVER: argocd-server.argocd.svc.cluster.local
+
+jobs:
+  cd:
+    runs-on: [self-hosted, linux]
+    # First successful run takes ~5–10 min to download argocd CLI on a cold
+    # cache. Once actions/cache has saved the binary, subsequent runs drop
+    # back under 2 min — at that point you can safely lower this to 10.
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect environment
+        shell: bash
+        run: |
+          if [ "${{ '${{ github.event_name }}' }}" = "push" ]; then
+            # Derive env from whichever values file changed in this push.
+            CHANGED=$(git diff --name-only ${{ '${{ github.event.before }}' }} ${{ '${{ github.sha }}' }} \
+              | grep 'values-.*\.yaml' | head -1)
+            ENV=$(echo "$CHANGED" | sed 's/.*values-\(.*\)\.yaml/\1/')
+          else
+            ENV="${{ '${{ github.event.inputs.environment }}' }}"
+          fi
+          echo "DEPLOY_ENV=${ENV}" >> "$GITHUB_ENV"
+          echo "ARGOCD_APP=${{values.app_name}}-${ENV}" >> "$GITHUB_ENV"
+
+      - name: Validate image tag
+        id: validate
+        shell: bash
+        run: |
+          TAG=$(awk '/^image:/{found=1} found && /tag:/{print $2; exit}' \
+            "charts/${{values.app_name}}/values-${DEPLOY_ENV}.yaml" | tr -d '"')
+          if [ -z "$TAG" ]; then
+            echo "::notice::image.tag is empty in values-${DEPLOY_ENV}.yaml — skipping deployment."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Deploying image tag: ${TAG}"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Detect runner architecture
+        id: arch
+        if: steps.validate.outputs.skip != 'true'
+        shell: bash
+        run: |
+          case "$(uname -m)" in
+            x86_64)  echo "tag=amd64" >> "$GITHUB_OUTPUT" ;;
+            aarch64) echo "tag=arm64" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Unsupported arch $(uname -m)"; exit 1 ;;
+          esac
+
+      # Cache argocd CLI across runs. v3.x is ~150 MB — without this the step
+      # takes 30–60s on every CD; cached restore is <1s.
+      - name: Cache argocd CLI
+        if: steps.validate.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: /tmp/argocd
+          key: argocd-${{ '${{ steps.arch.outputs.tag }}' }}-${{ '${{ env.ARGOCD_VERSION }}' }}
+
+      - name: Install ArgoCD CLI
+        if: steps.validate.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMG="christseng89/argocd-bin:${{ '${{ env.ARGOCD_VERSION }}' }}"
+          PLATFORM="linux/${{ '${{ steps.arch.outputs.tag }}' }}"
+
+          if [ ! -x /tmp/argocd ]; then
+            echo "Cache miss — pulling argocd ${{ '${{ env.ARGOCD_VERSION }}' }} from Docker Hub mirror…"
+            for i in 1 2 3; do
+              if time docker pull --platform "$PLATFORM" "$IMG"; then break; fi
+              echo "Attempt $i failed; retrying in ${i}0s…"
+              sleep "${i}0"
+            done
+            # FROM scratch images have no default CMD — pass /argocd as a dummy arg.
+            cid=$(docker create --platform "$PLATFORM" "$IMG" /argocd)
+            docker cp "$cid:/argocd" /tmp/argocd
+            docker rm "$cid" >/dev/null
+            chmod +x /tmp/argocd
+          else
+            echo "Cache hit — using cached argocd at /tmp/argocd"
+          fi
+          /tmp/argocd version --client
+
+      - name: ArgoCD app sync
+        if: steps.validate.outputs.skip != 'true'
+        shell: bash
+        run: |
+          # --plaintext: argocd-server has `server.insecure: true`, so the
+          # service answers plain HTTP.
+          /tmp/argocd login ${{ '${{ env.ARGOCD_SERVER }}' }} \
+            --plaintext \
+            --grpc-web \
+            --username admin \
+            --password "${{ '${{ secrets.ARGOCD_PASSWORD }}' }}"
+          /tmp/argocd app sync ${{ '${{ env.ARGOCD_APP }}' }}
+          /tmp/argocd app wait ${{ '${{ env.ARGOCD_APP }}' }} --health --timeout 180
+
+      # Runs only when one of the steps above failed.
+      - name: Diagnose on failure
+        if: failure() && steps.validate.outputs.skip != 'true'
+        shell: bash
+        run: |
+          echo "=== argocd app get ==="
+          /tmp/argocd app get ${{ '${{ env.ARGOCD_APP }}' }} || true
+          echo "=== argocd app history ==="
+          /tmp/argocd app history ${{ '${{ env.ARGOCD_APP }}' }} --output wide || true
+          echo "=== pods in ${{ '${{ env.DEPLOY_ENV }}' }} ns ==="
+          kubectl get pods -n ${{ '${{ env.DEPLOY_ENV }}' }} -o wide || true
+          echo "=== deploy describe ==="
+          kubectl describe deploy ${{values.app_name}} -n ${{ '${{ env.DEPLOY_ENV }}' }} || true
+          echo "=== recent pod logs ==="
+          kubectl logs -n ${{ '${{ env.DEPLOY_ENV }}' }} -l app.kubernetes.io/name=${{values.app_name}} --tail=200 --all-containers || true

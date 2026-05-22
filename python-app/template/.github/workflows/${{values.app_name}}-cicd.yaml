@@ -6,19 +6,15 @@ on:
       - src/**
     branches:
       - main
-  # Re-run the pipeline manually without needing a code change.
+  # Re-run CI+dev-deploy manually without a code change.
   workflow_dispatch:
 
-# Serialize runs against the same branch so two close pushes can't race on
-# values.yaml. cancel-in-progress is intentionally false — once CD started,
-# we want it to finish syncing rather than be killed mid-flight.
+# Serialize runs so two close pushes can't race on values-dev.yaml.
+# cancel-in-progress is false — once CD started we want it to finish.
 concurrency:
   group: cicd-${{ '${{ github.ref }}' }}
   cancel-in-progress: false
 
-# Least-privilege: only contents:write is needed (for the CD job's commit/push
-# back to main). Newer GitHub repos default GITHUB_TOKEN to read-only, so this
-# block is now required, not optional.
 permissions:
   contents: write
 
@@ -26,8 +22,8 @@ env:
   ARGOCD_VERSION: v3.4.2
   YQ_VERSION: v4.44.3
   IMAGE_NAME: christseng89/${{values.app_name}}
-  VALUES_PATH: charts/${{values.app_name}}/values-${{values.app_env}}.yaml
-  ARGOCD_APP: ${{values.app_name}}
+  VALUES_PATH: charts/${{values.app_name}}/values-dev.yaml
+  ARGOCD_APP: ${{values.app_name}}-dev
   ARGOCD_SERVER: argocd-server.argocd.svc.cluster.local
 
 jobs:
@@ -103,7 +99,7 @@ jobs:
           path: /tmp/yq
           key: yq-${{ '${{ steps.arch.outputs.tag }}' }}-${{ '${{ env.YQ_VERSION }}' }}
 
-      - name: Modify values file
+      - name: Update dev values file
         shell: bash
         run: |
           set -euo pipefail
@@ -131,7 +127,7 @@ jobs:
       - name: Commit changes
         uses: EndBug/add-and-commit@v9
         with:
-          message: "Updates values.yaml with commit ${{ '${{ needs.ci.outputs.commit_id }}' }}"
+          message: "ci: update dev image tag to ${{ '${{ needs.ci.outputs.commit_id }}' }}"
           github_token: ${{ '${{ secrets.GITHUB_TOKEN }}' }}
           # Rebase onto remote before pushing — survives the case where a
           # parallel run already pushed.
@@ -170,7 +166,7 @@ jobs:
           fi
           /tmp/argocd version --client
 
-      - name: Argocd app sync
+      - name: ArgoCD app sync
         shell: bash
         run: |
           # --plaintext: argocd-server has `server.insecure: true`, so the
@@ -183,9 +179,7 @@ jobs:
           /tmp/argocd app sync ${{ '${{ env.ARGOCD_APP }}' }}
           /tmp/argocd app wait ${{ '${{ env.ARGOCD_APP }}' }} --health --timeout 180
 
-      # Runs only when one of the steps above failed. Gives a one-page dump of
-      # what's wrong with the app so you don't have to manually kubectl/argocd
-      # into the cluster after a red CD.
+      # Runs only when one of the steps above failed.
       - name: Diagnose on failure
         if: failure()
         shell: bash
@@ -194,9 +188,9 @@ jobs:
           /tmp/argocd app get ${{ '${{ env.ARGOCD_APP }}' }} || true
           echo "=== argocd app history ==="
           /tmp/argocd app history ${{ '${{ env.ARGOCD_APP }}' }} --output wide || true
-          echo "=== pods in ${{ '${{ env.ARGOCD_APP }}' }} ns ==="
-          kubectl get pods -n ${{ '${{ env.ARGOCD_APP }}' }} -o wide || true
+          echo "=== pods in dev ns ==="
+          kubectl get pods -n dev -o wide || true
           echo "=== deploy describe ==="
-          kubectl describe deploy ${{ '${{ env.ARGOCD_APP }}' }} -n ${{ '${{ env.ARGOCD_APP }}' }} || true
+          kubectl describe deploy ${{values.app_name}} -n dev || true
           echo "=== recent pod logs ==="
-          kubectl logs -n ${{ '${{ env.ARGOCD_APP }}' }} -l app.kubernetes.io/name=${{ '${{ env.ARGOCD_APP }}' }} --tail=200 --all-containers || true
+          kubectl logs -n dev -l app.kubernetes.io/name=${{values.app_name}} --tail=200 --all-containers || true

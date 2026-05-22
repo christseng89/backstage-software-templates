@@ -2,10 +2,8 @@ replicaCount: 1
 image:
   repository: christseng89/${{values.app_name}}
   pullPolicy: IfNotPresent
-  # Placeholder. CI's "Modify values file" step rewrites .image.tag in
-  # values-<env>.yaml with the short commit SHA before ArgoCD ever syncs,
-  # so this default is never actually pulled in the GitOps flow.
-  # If you `helm install` directly, override --set image.tag=<sha>.
+  # Placeholder — overridden by values-dev/staging/prod.yaml in the GitOps flow.
+  # If you `helm install` directly, override with --set image.tag=<sha>.
   tag: v2
 imagePullSecrets: []
 nameOverride: ""
@@ -27,7 +25,7 @@ ingress:
   className: "nginx"
   annotations: {}
   hosts:
-    - host: ${{values.app_name}}-${{values.app_env}}.test.com
+    - host: ${{values.app_name}}-dev.test.com
       paths:
         - path: /
           pathType: Prefix

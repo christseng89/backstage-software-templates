@@ -1,6 +1,6 @@
 # ${{values.app_name}}
 
-After this repo is scaffolded, two manual steps are required before CI/CD will work.
+After this repo is scaffolded, three manual steps are required before CI/CD will work.
 
 ## Post-Scaffolding Steps
 
@@ -13,7 +13,23 @@ kubectl config use-context docker-desktop
 kubectl apply -f runnerdeployment.yaml
 ```
 
-### 2. Set GitHub Actions Secrets
+### 2. Pre-configure ArgoCD Apps (one-time)
+
+Three ArgoCD apps must exist before the first CD run. Each points to this repo
+with a different values file and target namespace:
+
+| ArgoCD app | Namespace | Values file |
+|---|---|---|
+| `${{values.app_name}}-dev` | `dev` | `charts/${{values.app_name}}/values-dev.yaml` |
+| `${{values.app_name}}-staging` | `staging` | `charts/${{values.app_name}}/values-staging.yaml` |
+| `${{values.app_name}}-prod` | `prod` | `charts/${{values.app_name}}/values-prod.yaml` |
+
+**Pipeline behaviour after setup:**
+- Push to `main` (via `src/**` change) → auto-deploys to **dev** (`${{values.app_name}}-dev.test.com`)
+- Promote to staging: edit `values-staging.yaml`, set `image.tag`, commit → auto-deploys to `${{values.app_name}}-staging.test.com`
+- Promote to prod: edit `values-prod.yaml`, set `image.tag`, commit → auto-deploys to `${{values.app_name}}-prod.test.com`
+
+### 3. Set GitHub Actions Secrets
 
 Load your secrets from a local `.env` file and push them to this repo:
 

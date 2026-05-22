@@ -29,11 +29,13 @@ Each template lives in its own directory (e.g., `python-app/`) with this layout:
 
 Backstage scaffolder uses `${{values.<key>}}` (double braces) for variable substitution in skeleton files — not Jinja `{{ }}` or shell `${}`. This applies to filenames, directory names, and file contents.
 
-GitHub Actions expressions (`${{ github.ref }}`, `${{ secrets.FOO }}`) inside skeleton files must be escaped as nunjucks string literals to prevent Backstage from treating them as template expressions:
+**All** GitHub Actions `${{ }}` expressions inside skeleton files must be escaped as nunjucks string literals — this applies to every namespace (`github.*`, `secrets.*`, `inputs.*`, `steps.*`, `needs.*`, etc.):
 
 ```yaml
 # In a skeleton file — outputs: ${{ github.ref }}
 group: cicd-${{ '${{ github.ref }}' }}
+# In a skeleton file — outputs: ${{ inputs.argocd_version }}
+tag: ${{ '${{ inputs.argocd_version }}' }}
 ```
 
 The `template.yaml` maps user inputs to `values.*`:
@@ -64,6 +66,25 @@ Scaffolded repos follow a GitOps pattern:
 ## Reference File: cicd-sample.yaml
 
 `python-app/template/.github/workflows/cicd-sample.yaml` is **not scaffolded** — it is the canonical working pipeline as deployed on the `christseng89/python-app` repo itself (with hardcoded paths like `python-app/src/**`). It serves as a reference when updating the template. The template version (`${{values.app_name}}-cicd.yaml`) is derived from it with `${{values.*}}` substitutions.
+
+## Updating CLI Tool Versions (yq / ArgoCD)
+
+The cicd template pins both tools near the top of `${{values.app_name}}-cicd.yaml`:
+
+```yaml
+env:
+  ARGOCD_VERSION: v3.4.2
+  YQ_VERSION: v4.44.3
+```
+
+`mirror-cli-binaries.yaml` is a **scaffolded** `workflow_dispatch` workflow that mirrors these binaries from GitHub Releases (slow from Asia) to Docker Hub (`christseng89/argocd-bin`, `christseng89/yq-bin`) as `FROM scratch` multi-arch images. The CD job pulls from Docker Hub for speed and caches the binary in `/tmp/` keyed by version+arch.
+
+**Version bump procedure:**
+1. Update `ARGOCD_VERSION` / `YQ_VERSION` in `python-app/template/.github/workflows/${{values.app_name}}-cicd.yaml`
+2. Run `mirror-cli-binaries.yaml` manually (Actions tab) in each generated repo, passing the new version(s) as inputs — the mirror must exist on Docker Hub before the cache-miss path tries to pull it
+3. The cache key includes the version string, so the next CD run automatically invalidates and re-downloads
+
+The CD job's `timeout-minutes: 25` is conservative for cold cache (first pull of ~150 MB argocd binary takes 5–10 min). After the cache warms, actual runtime is under 2 min; you can safely lower the timeout to 10 in generated repos once the cache is populated.
 
 ## Adding a New Template
 

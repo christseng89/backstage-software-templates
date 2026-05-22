@@ -1,5 +1,15 @@
 replicaCount: 2
 
+image:
+  tag: ""
+
+ingress:
+  hosts:
+    - host: ${{values.app_name}}-staging.test.com
+      paths:
+        - path: /
+          pathType: Prefix
+
 resources:
   requests:
     cpu: 50m
