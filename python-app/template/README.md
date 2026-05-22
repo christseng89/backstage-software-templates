@@ -94,9 +94,10 @@ docker tag ${{values.app_name}}:local christseng89/${{values.app_name}}:local
 docker push christseng89/${{values.app_name}}:local
 ```
 
-> `docker build/push` and `helm install/upgrade` are **not** required manually
-> in the normal GitOps flow — `cicd.yaml` builds and pushes the image, and
-> ArgoCD applies the Helm chart automatically.
+> You do not run `docker build/push` or `helm install/upgrade` manually in the
+> normal GitOps flow. `cicd.yaml` handles the Docker build and push; ArgoCD
+> runs `helm upgrade --install` against Docker Desktop's k8s automatically
+> as part of every `app sync`.
 
 ### 2. Deploy to Dev — push source changes
 
