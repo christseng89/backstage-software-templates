@@ -6,7 +6,6 @@ metadata:
   annotations:
     github.com/project-slug: christseng89/${{values.app_name}}
     backstage.io/kubernetes-id: ${{values.app_name}}
-    backstage.io/kubernetes-namespace: ${{values.app_name}}
     backstage.io/techdocs-ref: dir:.
   links:
     - url: http://${{values.app_name}}-dev.test.com:9080/
