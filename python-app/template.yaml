@@ -53,6 +53,7 @@ spec:
         defaultBranch: main
         protectDefaultBranch: false
         repoVisibility: ${{ parameters.repoVisibility }}
+        gitCommitMessage: "init commit [skip ci]"
 
     - id: register
       name: Register
