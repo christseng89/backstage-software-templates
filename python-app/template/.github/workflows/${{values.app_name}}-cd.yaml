@@ -34,7 +34,34 @@ env:
   ARGOCD_CHART_PATH: charts/${{values.app_name}}
 
 jobs:
+  preflight:
+    if: "!contains(github.event.head_commit.message, 'init commit')"
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ '${{ steps.check.outputs.ready }}' }}
+    steps:
+      - name: Check secrets and variables
+        id: check
+        env:
+          ARGOCD_PASSWORD: ${{ '${{ secrets.ARGOCD_PASSWORD }}' }}
+          GH_PAT: ${{ '${{ secrets.GH_PAT }}' }}
+        run: |
+          set -euo pipefail
+          MISSING=""
+          [ -z "$ARGOCD_PASSWORD" ]  && MISSING="$MISSING ARGOCD_PASSWORD"
+          [ -z "$GH_PAT" ]           && MISSING="$MISSING GH_PAT"
+          [ -z "$ARGOCD_VERSION" ]   && MISSING="$MISSING ARGOCD_VERSION"
+          [ -z "$KUBECTL_VERSION" ]  && MISSING="$MISSING KUBECTL_VERSION"
+          if [ -n "$MISSING" ]; then
+            echo "::notice::Post-scaffolding setup incomplete — skipping pipeline. Missing:$MISSING"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
   cd:
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
     runs-on: [self-hosted, linux]
     # First successful run takes ~5-10 min to download argocd CLI on a cold
     # cache. Once actions/cache has saved the binary, subsequent runs drop
