@@ -5,22 +5,27 @@ name: mirror-cli-binaries
 # Copies CLI binaries from GitHub Releases (slow from Asia, especially for
 # arm64 binaries) to Docker Hub (fast Cloudflare CDN with Asia POPs).
 #
-# Run this manually from the Actions tab whenever you bump ARGOCD_VERSION
-# or YQ_VERSION in <app_name>-cicd.yaml. It runs on a GitHub-hosted runner
-# where the fetch from GitHub Releases is fast (internal network), then
-# pushes to Docker Hub for the CD job to consume.
+# Versions are sourced from repository variables (Settings → Variables):
+#   ARGOCD_VERSION, YQ_VERSION, KUBECTL_VERSION
+# The inputs below override those variables for a single run — leave them
+# blank to use the repo variable value. Run this whenever you update a
+# repo variable so the Docker Hub mirror stays in sync with the CD workflows.
 
 on:
   workflow_dispatch:
     inputs:
       argocd_version:
-        description: "ArgoCD CLI version to mirror (e.g., v3.4.2). Leave blank to skip."
+        description: "ArgoCD version to mirror. Leave blank to use ARGOCD_VERSION repo variable."
         required: false
-        default: "v3.4.2"
+        default: ""
       yq_version:
-        description: "yq version to mirror (e.g., v4.44.3). Leave blank to skip."
+        description: "yq version to mirror. Leave blank to use YQ_VERSION repo variable."
         required: false
-        default: "v4.44.3"
+        default: ""
+      kubectl_version:
+        description: "kubectl version to mirror. Leave blank to use KUBECTL_VERSION repo variable."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -46,18 +51,19 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Mirror ArgoCD CLI (amd64 + arm64)
-        if: inputs.argocd_version != ''
+        if: ${{ '${{ inputs.argocd_version != \'\' || vars.ARGOCD_VERSION != \'\' }}' }}
+        env:
+          VERSION: ${{ '${{ inputs.argocd_version || vars.ARGOCD_VERSION }}' }}
         run: |
           set -euo pipefail
-          ARGOCD_VERSION="${{ '${{ inputs.argocd_version }}' }}"
           mkdir -p ctx-argocd && cd ctx-argocd
           for arch in amd64 arm64; do
-            echo "Downloading argocd ${ARGOCD_VERSION} ${arch}..."
+            echo "Downloading argocd ${VERSION} ${arch}..."
             time curl -fSL --retry 3 --retry-delay 5 -o "argocd-${arch}" \
-              "https://github.com/argoproj/argo-cd/releases/download/${ARGOCD_VERSION}/argocd-linux-${arch}"
+              "https://github.com/argoproj/argo-cd/releases/download/${VERSION}/argocd-linux-${arch}"
             chmod +x "argocd-${arch}"
           done
-          # CMD is required so consumers can docker create without supplying
+          # CMD is required so consumers can `docker create` without supplying
           # an arg. The binary itself doesn't run as a container (FROM scratch
           # has no shell or libc), but CMD satisfies the daemon's requirement.
           cat > Dockerfile <<'DOCKERFILE'
@@ -68,21 +74,22 @@ CMD ["/argocd"]
 DOCKERFILE
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
-            --tag "christseng89/argocd-bin:${ARGOCD_VERSION}" \
+            --tag "christseng89/argocd-bin:${VERSION}" \
             --push \
             .
-          echo "::notice::Mirrored christseng89/argocd-bin:${ARGOCD_VERSION} (amd64+arm64)"
+          echo "::notice::Mirrored christseng89/argocd-bin:${VERSION} (amd64+arm64)"
 
       - name: Mirror yq (amd64 + arm64)
-        if: inputs.yq_version != ''
+        if: ${{ '${{ inputs.yq_version != \'\' || vars.YQ_VERSION != \'\' }}' }}
+        env:
+          VERSION: ${{ '${{ inputs.yq_version || vars.YQ_VERSION }}' }}
         run: |
           set -euo pipefail
-          YQ_VERSION="${{ '${{ inputs.yq_version }}' }}"
           mkdir -p ctx-yq && cd ctx-yq
           for arch in amd64 arm64; do
-            echo "Downloading yq ${YQ_VERSION} ${arch}..."
+            echo "Downloading yq ${VERSION} ${arch}..."
             time curl -fSL --retry 3 --retry-delay 5 -o "yq-${arch}" \
-              "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${arch}"
+              "https://github.com/mikefarah/yq/releases/download/${VERSION}/yq_linux_${arch}"
             chmod +x "yq-${arch}"
           done
           cat > Dockerfile <<'DOCKERFILE'
@@ -93,21 +100,66 @@ CMD ["/yq"]
 DOCKERFILE
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
-            --tag "christseng89/yq-bin:${YQ_VERSION}" \
+            --tag "christseng89/yq-bin:${VERSION}" \
             --push \
             .
-          echo "::notice::Mirrored christseng89/yq-bin:${YQ_VERSION} (amd64+arm64)"
+          echo "::notice::Mirrored christseng89/yq-bin:${VERSION} (amd64+arm64)"
+
+      - name: Mirror kubectl (amd64 + arm64)
+        if: ${{ '${{ inputs.kubectl_version != \'\' || vars.KUBECTL_VERSION != \'\' }}' }}
+        env:
+          VERSION: ${{ '${{ inputs.kubectl_version || vars.KUBECTL_VERSION }}' }}
+        run: |
+          set -euo pipefail
+          mkdir -p ctx-kubectl && cd ctx-kubectl
+          for arch in amd64 arm64; do
+            echo "Downloading kubectl ${VERSION} ${arch}..."
+            time curl -fSL --retry 3 --retry-delay 5 \
+              -o "kubectl-${arch}" \
+              "https://dl.k8s.io/release/${VERSION}/bin/linux/${arch}/kubectl"
+            chmod +x "kubectl-${arch}"
+          done
+          cat > Dockerfile <<'DOCKERFILE'
+FROM scratch
+ARG TARGETARCH
+COPY kubectl-${TARGETARCH} /kubectl
+CMD ["/kubectl"]
+DOCKERFILE
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --tag "christseng89/kubectl-bin:${VERSION}" \
+            --push \
+            .
+          echo "::notice::Mirrored christseng89/kubectl-bin:${VERSION} (amd64+arm64)"
+
+      # When an input override is provided, write it back to the repo variable
+      # so cicd.yaml stays in sync without a manual Settings update.
+      - name: Update repo variables
+        env:
+          GH_TOKEN: ${{ '${{ secrets.GITHUB_TOKEN }}' }}
+        run: |
+          set -euo pipefail
+          if [ -n "${{ '${{ inputs.argocd_version }}' }}" ]; then
+            gh variable set ARGOCD_VERSION --body "${{ '${{ inputs.argocd_version }}' }}" --repo ${{ '${{ github.repository }}' }}
+            echo "::notice::Updated ARGOCD_VERSION → ${{ '${{ inputs.argocd_version }}' }}"
+          fi
+          if [ -n "${{ '${{ inputs.yq_version }}' }}" ]; then
+            gh variable set YQ_VERSION --body "${{ '${{ inputs.yq_version }}' }}" --repo ${{ '${{ github.repository }}' }}
+            echo "::notice::Updated YQ_VERSION → ${{ '${{ inputs.yq_version }}' }}"
+          fi
+          if [ -n "${{ '${{ inputs.kubectl_version }}' }}" ]; then
+            gh variable set KUBECTL_VERSION --body "${{ '${{ inputs.kubectl_version }}' }}" --repo ${{ '${{ github.repository }}' }}
+            echo "::notice::Updated KUBECTL_VERSION → ${{ '${{ inputs.kubectl_version }}' }}"
+          fi
 
       - name: Summary
         if: always()
         run: |
-          ARGOCD_VERSION="${{ '${{ inputs.argocd_version }}' }}"
-          YQ_VERSION="${{ '${{ inputs.yq_version }}' }}"
           cat <<EOF >> "$GITHUB_STEP_SUMMARY"
           ## Mirror complete
-
           | Image | Tag | Pull command |
           |---|---|---|
-          | argocd | ${ARGOCD_VERSION:-_(skipped)_} | \`docker pull christseng89/argocd-bin:${ARGOCD_VERSION}\` |
-          | yq     | ${YQ_VERSION:-_(skipped)_}     | \`docker pull christseng89/yq-bin:${YQ_VERSION}\` |
+          | argocd | ${{ '${{ inputs.argocd_version || vars.ARGOCD_VERSION || \'_(skipped)_\' }}' }} | \`docker pull christseng89/argocd-bin:${{ '${{ inputs.argocd_version || vars.ARGOCD_VERSION }}' }}\` |
+          | yq | ${{ '${{ inputs.yq_version || vars.YQ_VERSION || \'_(skipped)_\' }}' }} | \`docker pull christseng89/yq-bin:${{ '${{ inputs.yq_version || vars.YQ_VERSION }}' }}\` |
+          | kubectl | ${{ '${{ inputs.kubectl_version || vars.KUBECTL_VERSION || \'_(skipped)_\' }}' }} | \`docker pull christseng89/kubectl-bin:${{ '${{ inputs.kubectl_version || vars.KUBECTL_VERSION }}' }}\` |
           EOF

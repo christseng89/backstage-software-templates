@@ -23,18 +23,20 @@ concurrency:
   group: cd-${{ '${{ github.event.inputs.environment }}' }}-${{ '${{ github.ref }}' }}
   cancel-in-progress: false
 
-# Read-only — no commit back needed; the values file is already updated.
+# Read-only — no commit back needed; the values file is already updated by the user.
 permissions:
   contents: read
 
 env:
-  ARGOCD_VERSION: v3.4.2
+  ARGOCD_VERSION: ${{ '${{ vars.ARGOCD_VERSION }}' }}
+  KUBECTL_VERSION: ${{ '${{ vars.KUBECTL_VERSION }}' }}
   ARGOCD_SERVER: argocd-server.argocd.svc.cluster.local
+  ARGOCD_CHART_PATH: charts/${{values.app_name}}
 
 jobs:
   cd:
     runs-on: [self-hosted, linux]
-    # First successful run takes ~5–10 min to download argocd CLI on a cold
+    # First successful run takes ~5-10 min to download argocd CLI on a cold
     # cache. Once actions/cache has saved the binary, subsequent runs drop
     # back under 2 min — at that point you can safely lower this to 10.
     timeout-minutes: 25
@@ -80,8 +82,42 @@ jobs:
             *) echo "Unsupported arch $(uname -m)"; exit 1 ;;
           esac
 
+      # Cache kubectl across runs. Key includes version + arch so a bump
+      # automatically invalidates the cache and re-downloads from the mirror.
+      - name: Cache kubectl binary
+        if: steps.validate.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: /tmp/kubectl
+          key: kubectl-${{ '${{ steps.arch.outputs.tag }}' }}-${{ '${{ env.KUBECTL_VERSION }}' }}
+
+      - name: Install kubectl
+        if: steps.validate.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMG="christseng89/kubectl-bin:${{ '${{ env.KUBECTL_VERSION }}' }}"
+          PLATFORM="linux/${{ '${{ steps.arch.outputs.tag }}' }}"
+
+          if [ ! -x /tmp/kubectl ]; then
+            echo "Cache miss — pulling kubectl ${{ '${{ env.KUBECTL_VERSION }}' }} from Docker Hub mirror..."
+            for i in 1 2 3; do
+              if time docker pull --platform "$PLATFORM" "$IMG"; then break; fi
+              echo "Attempt $i failed; retrying in ${i}0s..."
+              sleep "${i}0"
+            done
+            cid=$(docker create --platform "$PLATFORM" "$IMG" /kubectl)
+            docker cp "$cid:/kubectl" /tmp/kubectl
+            docker rm "$cid" >/dev/null
+            chmod +x /tmp/kubectl
+          else
+            echo "Cache hit — using cached kubectl at /tmp/kubectl"
+          fi
+          sudo cp /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
       # Cache argocd CLI across runs. v3.x is ~150 MB — without this the step
-      # takes 30–60s on every CD; cached restore is <1s.
+      # takes 30-60s on every CD; cached restore is <1s.
       - name: Cache argocd CLI
         if: steps.validate.outputs.skip != 'true'
         uses: actions/cache@v4
@@ -98,10 +134,10 @@ jobs:
           PLATFORM="linux/${{ '${{ steps.arch.outputs.tag }}' }}"
 
           if [ ! -x /tmp/argocd ]; then
-            echo "Cache miss — pulling argocd ${{ '${{ env.ARGOCD_VERSION }}' }} from Docker Hub mirror…"
+            echo "Cache miss — pulling argocd ${{ '${{ env.ARGOCD_VERSION }}' }} from Docker Hub mirror..."
             for i in 1 2 3; do
               if time docker pull --platform "$PLATFORM" "$IMG"; then break; fi
-              echo "Attempt $i failed; retrying in ${i}0s…"
+              echo "Attempt $i failed; retrying in ${i}0s..."
               sleep "${i}0"
             done
             # FROM scratch images have no default CMD — pass /argocd as a dummy arg.
@@ -114,31 +150,65 @@ jobs:
           fi
           /tmp/argocd version --client
 
-      - name: ArgoCD app ensure and sync
+      - name: ArgoCD login
         if: steps.validate.outputs.skip != 'true'
         shell: bash
         run: |
+          set -euo pipefail
           # --plaintext: argocd-server has `server.insecure: true`, so the
-          # service answers plain HTTP.
+          # service answers plain HTTP. Without this flag the CLI hits an interactive
+          # prompt and fatals with EOF (exit 20) in a non-interactive shell.
           /tmp/argocd login ${{ '${{ env.ARGOCD_SERVER }}' }} \
             --plaintext \
             --grpc-web \
             --username admin \
             --password "${{ '${{ secrets.ARGOCD_PASSWORD }}' }}"
 
-          # Create the app if it does not exist; --upsert makes this idempotent.
-          /tmp/argocd app create "$ARGOCD_APP" \
-            --upsert \
-            --repo "${{ '${{ github.server_url }}' }}/${{ '${{ github.repository }}' }}.git" \
-            --path "charts/${{values.app_name}}" \
-            --dest-server https://kubernetes.default.svc \
-            --dest-namespace "$DEPLOY_ENV" \
-            --values "values-${DEPLOY_ENV}.yaml" \
-            --project default \
-            --revision HEAD
+      - name: Register GitHub repo in ArgoCD
+        if: steps.validate.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --upsert: safe to call on every run — updates credentials if they
+          # already exist, registers them from scratch after a cluster rebuild.
+          /tmp/argocd repo add ${{ '${{ github.server_url }}' }}/${{ '${{ github.repository }}' }}.git \
+            --username x-access-token \
+            --password "${{ '${{ secrets.GH_PAT }}' }}" \
+            --upsert
 
-          /tmp/argocd app sync ${{ '${{ env.ARGOCD_APP }}' }}
-          /tmp/argocd app wait ${{ '${{ env.ARGOCD_APP }}' }} --health --timeout 180
+      - name: Create ArgoCD app if absent
+        if: steps.validate.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if /tmp/argocd app get "$ARGOCD_APP" > /dev/null 2>&1; then
+            echo "App '$ARGOCD_APP' already exists — skipping create."
+          else
+            echo "App '$ARGOCD_APP' not found — creating..."
+            # --validate=false: skip server-side Helm rendering during creation.
+            /tmp/argocd app create "$ARGOCD_APP" \
+              --project default \
+              --sync-policy automated \
+              --auto-prune \
+              --self-heal \
+              --sync-option CreateNamespace=true \
+              --repo ${{ '${{ github.server_url }}' }}/${{ '${{ github.repository }}' }}.git \
+              --revision main \
+              --path ${{ '${{ env.ARGOCD_CHART_PATH }}' }} \
+              --dest-server https://kubernetes.default.svc \
+              --dest-namespace "$DEPLOY_ENV" \
+              --values "values-${DEPLOY_ENV}.yaml" \
+              --validate=false
+            echo "App '$ARGOCD_APP' created successfully."
+          fi
+
+      - name: ArgoCD app sync
+        if: steps.validate.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/argocd app sync "$ARGOCD_APP"
+          /tmp/argocd app wait "$ARGOCD_APP" --health --timeout 180
 
       # Runs only when one of the steps above failed.
       - name: Diagnose on failure
@@ -146,12 +216,12 @@ jobs:
         shell: bash
         run: |
           echo "=== argocd app get ==="
-          /tmp/argocd app get ${{ '${{ env.ARGOCD_APP }}' }} || true
+          /tmp/argocd app get "$ARGOCD_APP" || true
           echo "=== argocd app history ==="
-          /tmp/argocd app history ${{ '${{ env.ARGOCD_APP }}' }} --output wide || true
-          echo "=== pods in ${{ '${{ env.DEPLOY_ENV }}' }} ns ==="
-          kubectl get pods -n ${{ '${{ env.DEPLOY_ENV }}' }} -o wide || true
+          /tmp/argocd app history "$ARGOCD_APP" --output wide || true
+          echo "=== pods in ${DEPLOY_ENV} ns ==="
+          kubectl get pods -n "$DEPLOY_ENV" -o wide || true
           echo "=== deploy describe ==="
-          kubectl describe deploy ${{values.app_name}} -n ${{ '${{ env.DEPLOY_ENV }}' }} || true
+          kubectl describe deploy ${{values.app_name}} -n "$DEPLOY_ENV" || true
           echo "=== recent pod logs ==="
-          kubectl logs -n ${{ '${{ env.DEPLOY_ENV }}' }} -l app.kubernetes.io/name=${{values.app_name}} --tail=200 --all-containers || true
+          kubectl logs -n "$DEPLOY_ENV" -l app.kubernetes.io/name=${{values.app_name}} --tail=200 --all-containers || true

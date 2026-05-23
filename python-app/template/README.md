@@ -1,6 +1,6 @@
 # ${{values.app_name}}
 
-This repo was scaffolded from the `python-app` Backstage template. Three manual steps
+This repo was scaffolded from the `python-app` Backstage template. Four manual steps
 are required before CI/CD will work. ArgoCD apps are created automatically on the
 first successful pipeline run.
 
@@ -33,33 +33,29 @@ christseng89/${{values.app_name}}/
 
 ### Step 1 — Register the Self-Hosted Runner
 
-Apply the runner deployment to your local Docker Desktop Kubernetes cluster:
+Apply the runner deployment and RBAC to your local Docker Desktop Kubernetes cluster:
 
 ```bash
 kubectl config use-context docker-desktop
 kubectl apply -f runnerdeployment.yaml
+kubectl apply -f k8s/runner-rbac.yaml
 ```
 
-### Step 2 — Mirror CLI Binaries to Docker Hub
+> `runner-rbac.yaml` grants the ARC runner read access to pods and deployments —
+> required for the `kubectl` commands in the Diagnose-on-failure step.
 
-Run once to push `argocd` and `yq` binaries to Docker Hub before the first CD run.
-Skip if the mirrors already exist from a previous repo on the same versions.
-
-```
-GitHub → ${{values.app_name}} → Actions → mirror-cli-binaries → Run workflow
-  argocd_version: v3.4.2
-  yq_version:     v4.44.3
-```
-
-### Step 3 — Set GitHub Actions Secrets
+### Step 2 — Set GitHub Actions Secrets
 
 Load your secrets from a local `.env` file and push them to this repo:
 
 ```bash
 source .env
+gh auth login
 gh secret set DOCKERHUB_USERNAME --body $DOCKERHUB_USERNAME --repo christseng89/${{values.app_name}}
 gh secret set DOCKERHUB_TOKEN    --body $DOCKERHUB_TOKEN    --repo christseng89/${{values.app_name}}
 gh secret set ARGOCD_PASSWORD    --body $ARGOCD_PASSWORD    --repo christseng89/${{values.app_name}}
+gh secret set GH_PAT             --body $GITHUB_PAT         --repo christseng89/${{values.app_name}}
+
 gh secret list --repo christseng89/${{values.app_name}}
 ```
 
@@ -69,6 +65,37 @@ gh secret list --repo christseng89/${{values.app_name}}
 DOCKERHUB_USERNAME=your-username
 DOCKERHUB_TOKEN=your-token
 ARGOCD_PASSWORD=your-argocd-admin-password
+GITHUB_PAT=your-github-personal-access-token
+```
+
+> `GH_PAT` is used by the CD jobs to register the repository in ArgoCD so it can
+> pull from GitHub. Create a PAT with `repo` scope at GitHub → Settings → Developer settings → Personal access tokens.
+
+### Step 3 — Set GitHub Actions Variables
+
+Set the tool versions as repository variables (used by all three workflows):
+
+```bash
+gh variable set ARGOCD_VERSION  --body "v3.4.2"  --repo christseng89/${{values.app_name}}
+gh variable set YQ_VERSION      --body "v4.44.3" --repo christseng89/${{values.app_name}}
+gh variable set KUBECTL_VERSION --body "v1.36.1" --repo christseng89/${{values.app_name}}
+
+gh variable list --repo christseng89/${{values.app_name}}
+```
+
+> Variables (not secrets) are used for versions so `mirror-cli-binaries.yaml` can
+> update them automatically when you pass a version override as a workflow input.
+
+### Step 4 — Mirror CLI Binaries to Docker Hub
+
+Run once to push `argocd`, `yq`, and `kubectl` binaries to Docker Hub before the
+first CD run. Skip if the mirrors already exist from a previous repo on the same versions.
+
+```
+GitHub → ${{values.app_name}} → Actions → mirror-cli-binaries → Run workflow
+  argocd_version:  (leave blank to use ARGOCD_VERSION variable)
+  yq_version:      (leave blank to use YQ_VERSION variable)
+  kubectl_version: (leave blank to use KUBECTL_VERSION variable)
 ```
 
 ---

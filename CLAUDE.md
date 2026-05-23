@@ -53,9 +53,10 @@ The `template.yaml` maps user inputs to `values.*`:
 Scaffolded repos follow a GitOps pattern:
 
 - **CI** (GitHub-hosted `ubuntu-latest`): triggers on `src/**` pushes to `main`; builds a multi-arch (`linux/amd64,linux/arm64`) Docker image tagged with the short commit SHA (`${GITHUB_SHA::6}`); pushes to Docker Hub as `christseng89/<app_name>:<sha>` with a `buildcache` layer cache tag
-- **CD** (self-hosted ARC runner `[self-hosted, linux]`): uses `yq` (pulled from `christseng89/yq-bin` Docker Hub mirror) to write the new image tag into `charts/<app_name>/values-<env>.yaml`; commits back to `main` with rebase-pull; syncs ArgoCD via CLI (pulled from `christseng89/argocd-bin` mirror); waits for healthy status
+- **CD** (self-hosted ARC runner `[self-hosted, linux]`): installs `kubectl`, `yq`, and `argocd` CLI from `christseng89/*-bin` Docker Hub mirrors; writes the new image tag into `charts/<app_name>/values-dev.yaml`; commits back to `main` with rebase-pull; registers the GitHub repo in ArgoCD using `GH_PAT`; creates the ArgoCD app if absent; syncs and waits for healthy status
+- **Tool versions**: `ARGOCD_VERSION`, `YQ_VERSION`, `KUBECTL_VERSION` are stored as **GitHub Actions repository variables** (not hardcoded in the workflow). Both CD workflows read from `vars.*`; `mirror-cli-binaries.yaml` can update them automatically when given a version override as input.
 - **Helm charts**: base `values.yaml` holds all defaults; env-specific files (`values-dev.yaml`, `values-staging.yaml`, `values-prod.yaml`) override only what differs (replica count, resource requests). The CD job writes `.image.tag` into the env-specific file only.
-- **ArgoCD**: expected to be pre-configured before first run — the pipeline does **not** create the app. `charts/argocd/values-argo.yaml` is the Helm values for deploying ArgoCD itself (via `argo-cd` Helm chart), not the application. ArgoCD is accessed via in-cluster DNS (`argocd-server.argocd.svc.cluster.local`) because `argocd.test.com` only resolves via the Windows hosts file.
+- **ArgoCD**: the pipeline creates the app on first run if it does not exist (`argocd app create` with `--validate=false`). ArgoCD is accessed via in-cluster DNS (`argocd-server.argocd.svc.cluster.local`) because `argocd.test.com` only resolves via the Windows hosts file. ArgoCD and nginx ingress controller are cluster-level infrastructure installed separately — their Helm values live in `python-app1/charts/argocd/` and `python-app1/charts/nginx/`, not in the scaffolded app repo.
 - **Kubernetes**: Nginx ingress at `<app_name>-<env>.test.com`; health probes at `/api/v1/healthz` on port 5000. The `k8s/` raw manifests are alternatives to the Helm chart and are not part of the GitOps flow.
 - **TechDocs**: `mkdocs.yaml` and `docs/index.md` are included in the skeleton; `catalog-info.yaml` sets `backstage.io/techdocs-ref: dir:.`
 
@@ -63,25 +64,27 @@ Scaffolded repos follow a GitOps pattern:
 
 `runnerdeployment.yaml` uses the **summerwind Actions Runner Controller v1** API (`actions.summerwind.dev/v1alpha1`), not the newer GitHub ARC v2 (`actions.github.com`). `dockerEnabled: false` means no DinD sidecar — the runner accesses Docker via the host socket. The CD job uses `docker pull` / `docker create` / `docker cp` to extract tool binaries from `FROM scratch` mirror images without running a container.
 
-## Reference File: cicd-sample.yaml
+## Reference Files
 
-`python-app/template/.github/workflows/cicd-sample.yaml` is **not scaffolded** — it is the canonical working pipeline as deployed on the `christseng89/python-app` repo itself (with hardcoded paths like `python-app/src/**`). It serves as a reference when updating the template. The template version (`${{values.app_name}}-cicd.yaml`) is derived from it with `${{values.*}}` substitutions.
+`.github1/workflows/cicd.yaml` is the **canonical working pipeline** deployed on the `christseng89/python-app1` monorepo (hardcoded paths like `python-app/src/**`). It serves as the reference when updating the template. The template version (`${{values.app_name}}-cicd.yaml`) is derived from it with `${{values.*}}` substitutions and the `cicd` + `cd` split.
 
-## Updating CLI Tool Versions (yq / ArgoCD)
+`.github1/workflows/mirror-cli-binaries.yaml` is the reference for the scaffolded `mirror-cli-binaries.yaml`.
 
-The cicd template pins both tools near the top of `${{values.app_name}}-cicd.yaml`:
+## Updating CLI Tool Versions (yq / ArgoCD / kubectl)
 
-```yaml
-env:
-  ARGOCD_VERSION: v3.4.2
-  YQ_VERSION: v4.44.3
-```
+Tool versions are stored as **GitHub Actions repository variables** in each generated repo — not hardcoded in the workflow files. The three variables are:
 
-`mirror-cli-binaries.yaml` is a **scaffolded** `workflow_dispatch` workflow that mirrors these binaries from GitHub Releases (slow from Asia) to Docker Hub (`christseng89/argocd-bin`, `christseng89/yq-bin`) as `FROM scratch` multi-arch images. The CD job pulls from Docker Hub for speed and caches the binary in `/tmp/` keyed by version+arch.
+| Variable | Default |
+|---|---|
+| `ARGOCD_VERSION` | `v3.4.2` |
+| `YQ_VERSION` | `v4.44.3` |
+| `KUBECTL_VERSION` | `v1.36.1` |
+
+`mirror-cli-binaries.yaml` is a **scaffolded** `workflow_dispatch` workflow that mirrors these binaries from GitHub Releases (slow from Asia) to Docker Hub (`christseng89/argocd-bin`, `christseng89/yq-bin`, `christseng89/kubectl-bin`) as `FROM scratch` multi-arch images. The CD job pulls from Docker Hub for speed and caches the binary in `/tmp/` keyed by version+arch.
 
 **Version bump procedure:**
-1. Update `ARGOCD_VERSION` / `YQ_VERSION` in `python-app/template/.github/workflows/${{values.app_name}}-cicd.yaml`
-2. Run `mirror-cli-binaries.yaml` manually (Actions tab) in each generated repo, passing the new version(s) as inputs — the mirror must exist on Docker Hub before the cache-miss path tries to pull it
+1. Run `mirror-cli-binaries.yaml` manually (Actions tab) in each generated repo, passing the new version(s) as inputs — the workflow automatically updates the repo variable after a successful mirror
+2. The mirror must exist on Docker Hub before the cache-miss path tries to pull it
 3. The cache key includes the version string, so the next CD run automatically invalidates and re-downloads
 
 The CD job's `timeout-minutes: 25` is conservative for cold cache (first pull of ~150 MB argocd binary takes 5–10 min). After the cache warms, actual runtime is under 2 min; you can safely lower the timeout to 10 in generated repos once the cache is populated.
@@ -95,13 +98,16 @@ The CD job's `timeout-minutes: 25` is conservative for cold cache (first pull of
 
 ## Post-Scaffolding Manual Steps
 
-After Backstage creates the repo, two steps are required before CI/CD will work:
+After Backstage creates the repo, four steps are required before CI/CD will work:
 
-**1. Register the self-hosted runner** (Docker Desktop k8s):
+**1. Register the self-hosted runner and RBAC** (Docker Desktop k8s):
 ```bash
 kubectl config use-context docker-desktop
 kubectl apply -f runnerdeployment.yaml
+kubectl apply -f k8s/runner-rbac.yaml
 ```
+
+`runner-rbac.yaml` grants the ARC runner read access to pods and deployments — required for the `kubectl` commands in the Diagnose-on-failure step of both CD jobs.
 
 **2. Set GitHub Actions secrets** (load values from a local `.env` first):
 ```bash
@@ -109,7 +115,18 @@ source .env   # Bash / Git Bash / WSL only
 gh secret set DOCKERHUB_USERNAME --body $DOCKERHUB_USERNAME --repo christseng89/<app_name>
 gh secret set DOCKERHUB_TOKEN    --body $DOCKERHUB_TOKEN    --repo christseng89/<app_name>
 gh secret set ARGOCD_PASSWORD    --body $ARGOCD_PASSWORD    --repo christseng89/<app_name>
+gh secret set GH_PAT             --body $GITHUB_PAT         --repo christseng89/<app_name>
 gh secret list --repo christseng89/<app_name>
 ```
 
-Secrets cannot be embedded in `template.yaml`, so this step must remain manual.
+`GH_PAT` must have `repo` scope — it is used by both CD jobs to register the GitHub repo in ArgoCD via `argocd repo add`. Secrets cannot be embedded in `template.yaml`, so this step must remain manual.
+
+**3. Set GitHub Actions variables**:
+```bash
+gh variable set ARGOCD_VERSION  --body "v3.4.2"  --repo christseng89/<app_name>
+gh variable set YQ_VERSION      --body "v4.44.3" --repo christseng89/<app_name>
+gh variable set KUBECTL_VERSION --body "v1.36.1" --repo christseng89/<app_name>
+gh variable list --repo christseng89/<app_name>
+```
+
+**4. Mirror CLI binaries** — run `mirror-cli-binaries.yaml` once from the Actions tab (leave all inputs blank to mirror all three tools at the versions just set).

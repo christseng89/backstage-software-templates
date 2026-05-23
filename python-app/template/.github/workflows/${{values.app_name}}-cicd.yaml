@@ -19,15 +19,20 @@ permissions:
   contents: write
 
 env:
-  ARGOCD_VERSION: v3.4.2
-  YQ_VERSION: v4.44.3
+  ARGOCD_VERSION: ${{ '${{ vars.ARGOCD_VERSION }}' }}
+  YQ_VERSION: ${{ '${{ vars.YQ_VERSION }}' }}
+  KUBECTL_VERSION: ${{ '${{ vars.KUBECTL_VERSION }}' }}
   IMAGE_NAME: christseng89/${{values.app_name}}
   VALUES_PATH: charts/${{values.app_name}}/values-dev.yaml
   ARGOCD_APP: ${{values.app_name}}-dev
   ARGOCD_SERVER: argocd-server.argocd.svc.cluster.local
+  ARGOCD_CHART_PATH: charts/${{values.app_name}}
 
 jobs:
   ci:
+    # GitHub-hosted runner: CI only needs Docker Hub egress; GitHub-hosted runners
+    # have very fast access to GitHub Releases (internal network), so setup actions
+    # download in seconds. Keep CD on ARC because it needs in-cluster ArgoCD access.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -39,11 +44,14 @@ jobs:
 
       - name: Shorten commit id
         shell: bash
+        # COMMIT_ID = first 6 chars of GITHUB_SHA, used as the Docker image tag
+        # and written into the Helm chart's values-dev.yaml.
         run: |
           echo "COMMIT_ID=${GITHUB_SHA::6}" >> "$GITHUB_ENV"
 
       # QEMU + Buildx are required so the runner can emit an arm64 image layer
-      # on top of an amd64 host via cross-architecture emulation.
+      # on top of an amd64 host via cross-architecture emulation. Without this,
+      # ARM64 nodes crash the pod with "exec format error".
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -65,21 +73,25 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ '${{ env.IMAGE_NAME }}' }}:${{ '${{ env.COMMIT_ID }}' }}
           # Reuse Docker layers across builds via a separate buildcache tag on
-          # the same Docker Hub repo.
+          # the same Docker Hub repo. Saves ~60-120s on multi-arch builds.
           cache-from: type=registry,ref=${{ '${{ env.IMAGE_NAME }}' }}:buildcache
           cache-to: type=registry,ref=${{ '${{ env.IMAGE_NAME }}' }}:buildcache,mode=max
 
   cd:
     needs: ci
     runs-on: [self-hosted, linux]
-    # First successful run takes ~5–10 min to download argocd CLI on a cold
-    # cache. Once actions/cache has saved the binary, subsequent runs drop
-    # back under 2 min — at that point you can safely lower this to 10.
+    # First successful run takes ~5-10 min just to download argocd CLI on a
+    # cold cache. Once actions/cache has saved the binary, subsequent runs
+    # drop back under 2 min — at that point you can safely lower this to 10.
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
           token: ${{ '${{ secrets.GITHUB_TOKEN }}' }}
+
+      # No `docker login` here: the mirror images (christseng89/argocd-bin,
+      # christseng89/yq-bin, christseng89/kubectl-bin) are public on Docker Hub,
+      # so anonymous pulls work.
 
       - name: Detect runner architecture
         id: arch
@@ -88,8 +100,40 @@ jobs:
           case "$(uname -m)" in
             x86_64)  echo "tag=amd64" >> "$GITHUB_OUTPUT" ;;
             aarch64) echo "tag=arm64" >> "$GITHUB_OUTPUT" ;;
-            *) echo "Unsupported arch $(uname -m)"; exit 1 ;;
+            *)       echo "Unsupported arch $(uname -m)"; exit 1 ;;
           esac
+
+      # Cache kubectl across runs. Key includes version + arch so a bump
+      # automatically invalidates the cache and re-downloads from the mirror.
+      - name: Cache kubectl binary
+        uses: actions/cache@v4
+        with:
+          path: /tmp/kubectl
+          key: kubectl-${{ '${{ steps.arch.outputs.tag }}' }}-${{ '${{ env.KUBECTL_VERSION }}' }}
+
+      - name: Install kubectl
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMG="christseng89/kubectl-bin:${{ '${{ env.KUBECTL_VERSION }}' }}"
+          PLATFORM="linux/${{ '${{ steps.arch.outputs.tag }}' }}"
+
+          if [ ! -x /tmp/kubectl ]; then
+            echo "Cache miss — pulling kubectl ${{ '${{ env.KUBECTL_VERSION }}' }} from Docker Hub mirror..."
+            for i in 1 2 3; do
+              if time docker pull --platform "$PLATFORM" "$IMG"; then break; fi
+              echo "Attempt $i failed; retrying in ${i}0s..."
+              sleep "${i}0"
+            done
+            cid=$(docker create --platform "$PLATFORM" "$IMG" /kubectl)
+            docker cp "$cid:/kubectl" /tmp/kubectl
+            docker rm "$cid" >/dev/null
+            chmod +x /tmp/kubectl
+          else
+            echo "Cache hit — using cached kubectl at /tmp/kubectl"
+          fi
+          sudo cp /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client
 
       # Cache yq across runs. Key includes version + arch so a version bump
       # automatically invalidates the cache and re-downloads.
@@ -107,10 +151,10 @@ jobs:
           PLATFORM="linux/${{ '${{ steps.arch.outputs.tag }}' }}"
 
           if [ ! -x /tmp/yq ]; then
-            echo "Cache miss — pulling yq ${{ '${{ env.YQ_VERSION }}' }} from Docker Hub mirror…"
+            echo "Cache miss — pulling yq ${{ '${{ env.YQ_VERSION }}' }} from Docker Hub mirror..."
             for i in 1 2 3; do
               if time docker pull --platform "$PLATFORM" "$IMG"; then break; fi
-              echo "Attempt $i failed; retrying in ${i}0s…"
+              echo "Attempt $i failed; retrying in ${i}0s..."
               sleep "${i}0"
             done
             # FROM scratch images have no default CMD, so docker create needs a
@@ -135,7 +179,7 @@ jobs:
           push: true
 
       # Cache argocd CLI across runs. v3.x is ~150 MB — without this the step
-      # takes 30–60s on every CD; cached restore is <1s.
+      # takes 30-60s on every CD; cached restore is <1s.
       - name: Cache argocd CLI
         uses: actions/cache@v4
         with:
@@ -150,10 +194,10 @@ jobs:
           PLATFORM="linux/${{ '${{ steps.arch.outputs.tag }}' }}"
 
           if [ ! -x /tmp/argocd ]; then
-            echo "Cache miss — pulling argocd ${{ '${{ env.ARGOCD_VERSION }}' }} from Docker Hub mirror…"
+            echo "Cache miss — pulling argocd ${{ '${{ env.ARGOCD_VERSION }}' }} from Docker Hub mirror..."
             for i in 1 2 3; do
               if time docker pull --platform "$PLATFORM" "$IMG"; then break; fi
-              echo "Attempt $i failed; retrying in ${i}0s…"
+              echo "Attempt $i failed; retrying in ${i}0s..."
               sleep "${i}0"
             done
             # FROM scratch images have no default CMD — pass /argocd as a dummy arg.
@@ -166,32 +210,68 @@ jobs:
           fi
           /tmp/argocd version --client
 
-      - name: ArgoCD app ensure and sync
+      - name: ArgoCD login
         shell: bash
         run: |
-          # --plaintext: argocd-server has `server.insecure: true`, so the
-          # service answers plain HTTP.
+          set -euo pipefail
+          # In-cluster service DNS is used because argocd.test.com only resolves
+          # via the Windows hosts file, which the runner pod can't see.
+          # --plaintext: argocd-server has `server.insecure: true`, so the service
+          # answers plain HTTP. Without this flag the CLI hits an interactive prompt
+          # and fatals with EOF (exit 20) in a non-interactive shell.
           /tmp/argocd login ${{ '${{ env.ARGOCD_SERVER }}' }} \
             --plaintext \
             --grpc-web \
             --username admin \
             --password "${{ '${{ secrets.ARGOCD_PASSWORD }}' }}"
 
-          # Create the app if it does not exist; --upsert makes this idempotent.
-          /tmp/argocd app create ${{ '${{ env.ARGOCD_APP }}' }} \
-            --upsert \
-            --repo "${{ '${{ github.server_url }}' }}/${{ '${{ github.repository }}' }}.git" \
-            --path "charts/${{values.app_name}}" \
-            --dest-server https://kubernetes.default.svc \
-            --dest-namespace dev \
-            --values values-dev.yaml \
-            --project default \
-            --revision HEAD
+      - name: Register GitHub repo in ArgoCD
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --upsert: safe to call on every run — updates credentials if they
+          # already exist, registers them from scratch after a cluster rebuild.
+          /tmp/argocd repo add ${{ '${{ github.server_url }}' }}/${{ '${{ github.repository }}' }}.git \
+            --username x-access-token \
+            --password "${{ '${{ secrets.GH_PAT }}' }}" \
+            --upsert
 
+      - name: Create ArgoCD app if absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          if /tmp/argocd app get ${{ '${{ env.ARGOCD_APP }}' }} > /dev/null 2>&1; then
+            echo "App '${{ '${{ env.ARGOCD_APP }}' }}' already exists — skipping create."
+          else
+            echo "App '${{ '${{ env.ARGOCD_APP }}' }}' not found — creating..."
+            # --validate=false: skip server-side Helm rendering during creation.
+            # ArgoCD times out rendering charts on resource-constrained clusters
+            # on first access. The explicit sync step below handles deployment.
+            /tmp/argocd app create ${{ '${{ env.ARGOCD_APP }}' }} \
+              --project default \
+              --sync-policy automated \
+              --auto-prune \
+              --self-heal \
+              --sync-option CreateNamespace=true \
+              --repo ${{ '${{ github.server_url }}' }}/${{ '${{ github.repository }}' }}.git \
+              --revision main \
+              --path ${{ '${{ env.ARGOCD_CHART_PATH }}' }} \
+              --dest-server https://kubernetes.default.svc \
+              --dest-namespace dev \
+              --values values-dev.yaml \
+              --validate=false
+            echo "App '${{ '${{ env.ARGOCD_APP }}' }}' created successfully."
+          fi
+
+      - name: ArgoCD app sync
+        shell: bash
+        run: |
+          set -euo pipefail
           /tmp/argocd app sync ${{ '${{ env.ARGOCD_APP }}' }}
           /tmp/argocd app wait ${{ '${{ env.ARGOCD_APP }}' }} --health --timeout 180
 
-      # Runs only when one of the steps above failed.
+      # Runs only when one of the steps above failed. Gives a one-page dump of
+      # what's wrong so you don't have to manually kubectl/argocd into the cluster.
       - name: Diagnose on failure
         if: failure()
         shell: bash

@@ -5,7 +5,19 @@ metadata:
   description: Python app that displays time - named ${{values.app_name}}
   annotations:
     github.com/project-slug: christseng89/${{values.app_name}}
+    backstage.io/kubernetes-id: ${{values.app_name}}
+    backstage.io/kubernetes-namespace: ${{values.app_name}}
     backstage.io/techdocs-ref: dir:.
+  links:
+    - url: http://${{values.app_name}}-dev.test.com:9080/
+      title: Hello World (dev)
+      icon: web
+    - url: http://${{values.app_name}}-dev.test.com:9080/api/v1/info
+      title: Service Info
+      icon: dashboard
+    - url: http://${{values.app_name}}-dev.test.com:9080/api/v1/healthz
+      title: Health Check
+      icon: techdocs
 spec:
   type: service
   owner: development

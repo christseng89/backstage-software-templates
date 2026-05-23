@@ -1,0 +1,134 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${{values.app_name}}
+  namespace: default
+  labels:
+    app: ${{values.app_name}}
+    app.kubernetes.io/name: ${{values.app_name}}
+    app.kubernetes.io/component: api
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0 # zero-downtime: new pod must be Ready before old is removed
+  selector:
+    matchLabels:
+      app: ${{values.app_name}}
+  template:
+    metadata:
+      labels:
+        app: ${{values.app_name}}
+        app.kubernetes.io/name: ${{values.app_name}}
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ${{values.app_name}}
+          image: christseng89/${{values.app_name}}:latest # replace with immutable SHA tag in production
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 5000
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 50m
+              memory: 50Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          livenessProbe:
+            httpGet:
+              path: /api/v1/healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/v1/healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"] # drain in-flight requests before SIGTERM
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${{values.app_name}}
+  namespace: default
+  labels:
+    app: ${{values.app_name}}
+    app.kubernetes.io/name: ${{values.app_name}}
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    app: ${{values.app_name}}
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: 5000
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${{values.app_name}}
+  namespace: default
+  labels:
+    app: ${{values.app_name}}
+    app.kubernetes.io/name: ${{values.app_name}}
+    app.kubernetes.io/component: api
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+    nginx.ingress.kubernetes.io/limit-rps: "20"
+    # Uncomment to enable TLS redirect once cert-manager is configured
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  # Uncomment and populate when TLS is available (e.g. cert-manager + Let's Encrypt)
+  # tls:
+  # - hosts:
+  #   - ${{values.app_name}}.test.com
+  #   secretName: ${{values.app_name}}-tls
+  rules:
+    - host: ${{values.app_name}}.test.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ${{values.app_name}}
+                port:
+                  number: 8080

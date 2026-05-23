@@ -1,3 +1,5 @@
+commonLabels:
+  backstage.io/kubernetes-id: ${{values.app_name}}
 replicaCount: 1
 image:
   repository: christseng89/${{values.app_name}}
