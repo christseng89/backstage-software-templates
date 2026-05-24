@@ -4,9 +4,10 @@ metadata:
   name: ${{values.app_name}}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: arc-runner-reader
+  namespace: ${{values.app_name}}
 rules:
   - apiGroups: [""]
     resources: ["pods", "pods/log"]
@@ -16,14 +17,15 @@ rules:
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
-  name: arc-runner-reader-${{values.app_name}}
+  name: arc-runner-reader
+  namespace: ${{values.app_name}}
 subjects:
   - kind: ServiceAccount
-    name: default
+    name: ${{values.app_name}}-runner
     namespace: ${{values.app_name}}
 roleRef:
-  kind: ClusterRole
+  kind: Role
   name: arc-runner-reader
   apiGroup: rbac.authorization.k8s.io

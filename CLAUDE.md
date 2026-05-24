@@ -72,7 +72,7 @@ Scaffolded repos follow a GitOps pattern:
 
 `runnerdeployment.yaml` uses the **summerwind Actions Runner Controller v1** API (`actions.summerwind.dev/v1alpha1`), not the newer GitHub ARC v2 (`actions.github.com`). `dockerEnabled: false` means no DinD sidecar — the runner accesses Docker via the host socket. The CD job uses `docker pull` / `docker create` / `docker cp` to extract tool binaries from `FROM scratch` mirror images without running a container.
 
-The runner is deployed into a dedicated `${{values.app_name}}` namespace (not `default`). `k8s/runner-rbac.yaml` contains three manifests applied in order: `Namespace`, `ClusterRole` (named `arc-runner-reader`, shared across apps), and `ClusterRoleBinding` (named `arc-runner-reader-<app_name>`, unique per app to avoid conflicts when multiple apps are scaffolded). Apply rbac before the runner deployment so the namespace exists first.
+The runner is deployed into a dedicated `${{values.app_name}}` namespace (not `default`). `k8s/runner-rbac.yaml` contains three manifests applied in order: `Namespace`, `Role` (named `arc-runner-reader`, namespace-scoped to the app namespace), and `RoleBinding` (named `arc-runner-reader`, also namespace-scoped). Using `Role`+`RoleBinding` instead of `ClusterRole`+`ClusterRoleBinding` ensures each runner can only read pods and deployments in its own namespace — correct for multi-project clusters. Apply rbac before the runner deployment so the namespace exists first.
 
 ## Reference Files
 

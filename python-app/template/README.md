@@ -32,10 +32,39 @@ christseng89/${{values.app_name}}/
 
 ## Post-Scaffolding Steps
 
-> **TL;DR — run the setup script** (requires `.env` in the repo root and `gh` authenticated):
+### Before You Begin — Create `.env`
+
+`setup.sh` sources a `.env` file from the repo root before doing anything else.
+Create it now (Git Bash / WSL on Windows; Bash on Linux/macOS):
+
+```bash
+cat > .env <<'EOF'
+# --- Required ---
+DOCKERHUB_USERNAME=your-dockerhub-username
+DOCKERHUB_TOKEN=your-dockerhub-access-token
+ARGOCD_PASSWORD=your-argocd-admin-password
+GITHUB_PAT=your-github-personal-access-token   # needs repo scope
+
+# --- Optional: override tool versions (defaults shown) ---
+# ARGOCD_VERSION=v3.4.2
+# YQ_VERSION=v4.44.3
+# KUBECTL_VERSION=v1.36.1
+EOF
+```
+
+> `GH_PAT` (set from `GITHUB_PAT`) is used by the CD jobs to register this repo in
+> ArgoCD. Create one at GitHub → Settings → Developer settings → Personal access tokens
+> with **`repo`** scope.
+
+> `.env` is git-ignored — never commit it.
+
+---
+
+> **TL;DR — run the setup script** (after creating `.env` and authenticating `gh`):
 > ```bash
-> bash setup.sh              # runs all four steps
-> bash setup.sh --skip-mirror  # skip step 4 if Docker Hub mirrors already exist
+> gh auth login                 # one-time login if not already done
+> bash setup.sh                 # runs all four steps
+> bash setup.sh --skip-mirror   # skip step 4 if Docker Hub mirrors already exist
 > ```
 > The manual steps below document what the script does.
 
@@ -55,36 +84,27 @@ kubectl apply -f runnerdeployment.yaml
 
 ### Step 2 — Set GitHub Actions Secrets
 
-Load your secrets from a local `.env` file and push them to this repo:
+Source `.env` and push the secrets to this repo (Git Bash / WSL / Bash):
 
 ```bash
 source .env
-gh auth login
-gh secret set DOCKERHUB_USERNAME --body $DOCKERHUB_USERNAME --repo christseng89/${{values.app_name}}
-gh secret set DOCKERHUB_TOKEN    --body $DOCKERHUB_TOKEN    --repo christseng89/${{values.app_name}}
-gh secret set ARGOCD_PASSWORD    --body $ARGOCD_PASSWORD    --repo christseng89/${{values.app_name}}
-gh secret set GH_PAT             --body $GITHUB_PAT         --repo christseng89/${{values.app_name}}
+gh secret set DOCKERHUB_USERNAME --body "$DOCKERHUB_USERNAME" --repo christseng89/${{values.app_name}}
+gh secret set DOCKERHUB_TOKEN    --body "$DOCKERHUB_TOKEN"    --repo christseng89/${{values.app_name}}
+gh secret set ARGOCD_PASSWORD    --body "$ARGOCD_PASSWORD"    --repo christseng89/${{values.app_name}}
+gh secret set GH_PAT             --body "$GITHUB_PAT"         --repo christseng89/${{values.app_name}}
 
 gh secret list --repo christseng89/${{values.app_name}}
 ```
 
-> `source .env` is Bash-only — run these commands in Git Bash or WSL on Windows.
-
-```env
-DOCKERHUB_USERNAME=your-username
-DOCKERHUB_TOKEN=your-token
-ARGOCD_PASSWORD=your-argocd-admin-password
-GITHUB_PAT=your-github-personal-access-token
-```
-
-> `GH_PAT` is used by the CD jobs to register the repository in ArgoCD so it can
-> pull from GitHub. Create a PAT with `repo` scope at GitHub → Settings → Developer settings → Personal access tokens.
+> `source .env` is Bash-only — run in Git Bash or WSL on Windows.
 
 ### Step 3 — Set GitHub Actions Variables
 
-Set the tool versions as repository variables (used by all three workflows):
+Set the tool versions as repository variables (used by all three workflows).
+`setup.sh` reads them from `.env` if set there, otherwise uses the defaults:
 
 ```bash
+# Values used — override in .env with ARGOCD_VERSION / YQ_VERSION / KUBECTL_VERSION
 gh variable set ARGOCD_VERSION  --body "v3.4.2"  --repo christseng89/${{values.app_name}}
 gh variable set YQ_VERSION      --body "v4.44.3" --repo christseng89/${{values.app_name}}
 gh variable set KUBECTL_VERSION --body "v1.36.1" --repo christseng89/${{values.app_name}}
