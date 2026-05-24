@@ -24,6 +24,7 @@ christseng89/${{values.app_name}}/
 ├── Dockerfile
 ├── catalog-info.yaml                      ← Backstage component registration
 ├── runnerdeployment.yaml                  ← ARC self-hosted runner spec
+├── setup.sh                               ← automates post-scaffolding steps 1–4
 └── mkdocs.yaml + docs/                    ← TechDocs source
 ```
 
@@ -31,18 +32,26 @@ christseng89/${{values.app_name}}/
 
 ## Post-Scaffolding Steps
 
+> **TL;DR — run the setup script** (requires `.env` in the repo root and `gh` authenticated):
+> ```bash
+> bash setup.sh              # runs all four steps
+> bash setup.sh --skip-mirror  # skip step 4 if Docker Hub mirrors already exist
+> ```
+> The manual steps below document what the script does.
+
 ### Step 1 — Register the Self-Hosted Runner
 
 Apply the runner deployment and RBAC to your local Docker Desktop Kubernetes cluster:
 
 ```bash
 kubectl config use-context docker-desktop
-kubectl apply -f runnerdeployment.yaml
 kubectl apply -f k8s/runner-rbac.yaml
+kubectl apply -f runnerdeployment.yaml
 ```
 
-> `runner-rbac.yaml` grants the ARC runner read access to pods and deployments —
-> required for the `kubectl` commands in the Diagnose-on-failure step.
+> `runner-rbac.yaml` creates the `${{values.app_name}}` namespace, grants the ARC
+> runner read access to pods and deployments, and must be applied first so the
+> namespace exists before the runner deployment is created.
 
 ### Step 2 — Set GitHub Actions Secrets
 

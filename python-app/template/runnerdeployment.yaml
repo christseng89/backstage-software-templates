@@ -2,6 +2,7 @@ apiVersion: actions.summerwind.dev/v1alpha1
 kind: RunnerDeployment
 metadata:
   name: self-hosted-runner
+  namespace: ${{values.app_name}}
 spec:
   replicas: 1
   template:

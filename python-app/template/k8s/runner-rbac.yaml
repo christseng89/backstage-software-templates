@@ -1,3 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${{values.app_name}}
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -13,11 +18,11 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: arc-runner-reader
+  name: arc-runner-reader-${{values.app_name}}
 subjects:
   - kind: ServiceAccount
     name: default
-    namespace: default
+    namespace: ${{values.app_name}}
 roleRef:
   kind: ClusterRole
   name: arc-runner-reader

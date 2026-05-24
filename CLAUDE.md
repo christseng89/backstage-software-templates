@@ -103,8 +103,8 @@ After Backstage creates the repo, four steps are required before CI/CD will work
 **1. Register the self-hosted runner and RBAC** (Docker Desktop k8s):
 ```bash
 kubectl config use-context docker-desktop
-kubectl apply -f runnerdeployment.yaml
 kubectl apply -f k8s/runner-rbac.yaml
+kubectl apply -f runnerdeployment.yaml
 ```
 
 `runner-rbac.yaml` grants the ARC runner read access to pods and deployments — required for the `kubectl` commands in the Diagnose-on-failure step of both CD jobs.
