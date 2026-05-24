@@ -108,11 +108,13 @@ The CD job's `timeout-minutes: 25` is conservative for cold cache (first pull of
 
 ## Post-Scaffolding Manual Steps
 
-After Backstage creates the repo, four steps are required before CI/CD will work. The scaffolded `setup.sh` automates all four — run it from the cloned repo root with `.env` in place and `gh` authenticated:
+After Backstage creates the repo, six steps are required before CI/CD will work. The scaffolded `setup.sh` automates steps 1–4 and 6 — run it from the cloned repo root with `.env` in place and `gh` authenticated:
 
 ```bash
-bash setup.sh              # run all four steps
-bash setup.sh --skip-mirror  # skip step 4 if Docker Hub mirrors already exist
+bash setup.sh                        # run all steps
+bash setup.sh --skip-mirror          # skip step 4 (mirrors already exist on Docker Hub)
+bash setup.sh --skip-cicd            # skip step 6 (trigger workflow manually later)
+bash setup.sh --skip-mirror --skip-cicd
 ```
 
 The manual steps below document exactly what `setup.sh` does.
@@ -147,3 +149,13 @@ gh variable list --repo christseng89/<app_name>
 ```
 
 **4. Mirror CLI binaries** — run `mirror-cli-binaries.yaml` once from the Actions tab (leave all inputs blank to mirror all three tools at the versions just set).
+
+**5. Add Windows hosts entry** (requires PowerShell as Administrator — cannot be automated from bash):
+```powershell
+Add-Content C:\Windows\System32\drivers\etc\hosts "127.0.0.1 <app_name>-dev.test.com"
+```
+`setup.sh` prints this command as a reminder but cannot execute it.
+
+**6. Trigger the first CI/CD run** — `setup.sh` calls `gh workflow run <app_name>-cicd.yaml` and watches the run. Once the workflow succeeds, verify:
+- ArgoCD dashboard: `http://argocd.test.com:9080/`
+- App (dev): `http://<app_name>-dev.test.com:9080/`

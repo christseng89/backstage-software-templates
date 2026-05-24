@@ -4,17 +4,21 @@
 # Requires: .env file, kubectl (docker-desktop context), gh CLI authenticated.
 #
 # Usage:
-#   bash setup.sh              # run all four steps
-#   bash setup.sh --skip-mirror  # skip step 4 (mirrors already exist on Docker Hub)
+#   bash setup.sh                        # run all steps
+#   bash setup.sh --skip-mirror          # skip step 4 (mirrors already exist on Docker Hub)
+#   bash setup.sh --skip-cicd            # skip step 6 (trigger workflow manually later)
+#   bash setup.sh --skip-mirror --skip-cicd
 
 set -euo pipefail
 
 REPO="christseng89/${{values.app_name}}"
 SKIP_MIRROR=false
+SKIP_CICD=false
 
 for arg in "$@"; do
   case "$arg" in
     --skip-mirror) SKIP_MIRROR=true ;;
+    --skip-cicd)   SKIP_CICD=true ;;
     *) echo "Unknown argument: $arg"; exit 1 ;;
   esac
 done
@@ -115,7 +119,39 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Step 5 — Add hosts entry (requires Windows Administrator — run manually)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Step 5: Add Windows hosts entry (manual — requires Administrator) ==="
+echo "Open PowerShell as Administrator and run:"
+echo ""
+echo "  Add-Content C:\\Windows\\System32\\drivers\\etc\\hosts \"127.0.0.1 ${{values.app_name}}-dev.test.com\""
+echo ""
+echo "Skip if the entry already exists."
+
+# ---------------------------------------------------------------------------
+# Step 6 — Trigger the CI/CD workflow
+# ---------------------------------------------------------------------------
+echo ""
+if [ "$SKIP_CICD" = true ]; then
+  echo "=== Step 6: Skipped (--skip-cicd) ==="
+  echo "Trigger manually at: https://github.com/$REPO/actions"
+else
+  echo "=== Step 6: Trigger ${{values.app_name}}-cicd workflow ==="
+  gh workflow run "${{values.app_name}}-cicd.yaml" --repo "$REPO"
+  sleep 3
+  CICD_RUN_ID=$(gh run list --workflow="${{values.app_name}}-cicd.yaml" --repo "$REPO" \
+    --limit 1 --json databaseId --jq '.[0].databaseId')
+  echo "Watching run $CICD_RUN_ID (Ctrl-C to detach, workflow continues in background)..."
+  gh run watch "$CICD_RUN_ID" --repo "$REPO"
+fi
+
+# ---------------------------------------------------------------------------
 echo ""
 echo "=== Setup complete ==="
-echo "Push a change to src/ to trigger the first CI/CD run:"
-echo "  https://github.com/$REPO/actions"
+echo ""
+echo "Verify your deployment:"
+echo "  ArgoCD dashboard : http://argocd.test.com:9080/"
+echo "  App (dev)        : http://${{values.app_name}}-dev.test.com:9080/"
+echo ""
+echo "Workflow runs: https://github.com/$REPO/actions"
