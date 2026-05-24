@@ -38,6 +38,14 @@ group: cicd-${{ '${{ github.ref }}' }}
 tag: ${{ '${{ inputs.argocd_version }}' }}
 ```
 
+**Exception — job/step `if:` conditions**: GitHub Actions evaluates `if:` values as expression context without a `${{ }}` wrapper, so bare conditions are valid and avoid nunjucks processing entirely:
+```yaml
+# Preferred for if: — no ${{ }} needed, nunjucks ignores it
+if: "!contains(github.event.head_commit.message || '', 'init commit')"
+# The || '' guards against null on workflow_dispatch (head_commit is absent)
+```
+Only use `${{ '${{ ... }}' }}` escaping inside `if:` when the expression itself contains single quotes that can't be avoided.
+
 The `template.yaml` maps user inputs to `values.*`:
 - `component_id` (kebab-case, validated by regex) → `values.app_name`
 - `environment` (enum: dev / staging / prod) → `values.app_env`
@@ -63,6 +71,8 @@ Scaffolded repos follow a GitOps pattern:
 ## Self-Hosted Runner
 
 `runnerdeployment.yaml` uses the **summerwind Actions Runner Controller v1** API (`actions.summerwind.dev/v1alpha1`), not the newer GitHub ARC v2 (`actions.github.com`). `dockerEnabled: false` means no DinD sidecar — the runner accesses Docker via the host socket. The CD job uses `docker pull` / `docker create` / `docker cp` to extract tool binaries from `FROM scratch` mirror images without running a container.
+
+The runner is deployed into a dedicated `${{values.app_name}}` namespace (not `default`). `k8s/runner-rbac.yaml` contains three manifests applied in order: `Namespace`, `ClusterRole` (named `arc-runner-reader`, shared across apps), and `ClusterRoleBinding` (named `arc-runner-reader-<app_name>`, unique per app to avoid conflicts when multiple apps are scaffolded). Apply rbac before the runner deployment so the namespace exists first.
 
 ## Reference Files
 
@@ -98,7 +108,14 @@ The CD job's `timeout-minutes: 25` is conservative for cold cache (first pull of
 
 ## Post-Scaffolding Manual Steps
 
-After Backstage creates the repo, four steps are required before CI/CD will work:
+After Backstage creates the repo, four steps are required before CI/CD will work. The scaffolded `setup.sh` automates all four — run it from the cloned repo root with `.env` in place and `gh` authenticated:
+
+```bash
+bash setup.sh              # run all four steps
+bash setup.sh --skip-mirror  # skip step 4 if Docker Hub mirrors already exist
+```
+
+The manual steps below document exactly what `setup.sh` does.
 
 **1. Register the self-hosted runner and RBAC** (Docker Desktop k8s):
 ```bash
