@@ -30,7 +30,7 @@ env:
 
 jobs:
   ci:
-    if: "!contains(github.event.head_commit.message, 'init commit')"
+    if: "!contains(github.event.head_commit.message || '', 'init commit')"
     # GitHub-hosted runner: CI only needs Docker Hub egress; GitHub-hosted runners
     # have very fast access to GitHub Releases (internal network), so setup actions
     # download in seconds. Keep CD on ARC because it needs in-cluster ArgoCD access.

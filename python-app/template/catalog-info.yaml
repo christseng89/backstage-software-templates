@@ -8,13 +8,13 @@ metadata:
     backstage.io/kubernetes-id: ${{values.app_name}}
     backstage.io/techdocs-ref: dir:.
   links:
-    - url: http://${{values.app_name}}-dev.test.com:9080/
+    - url: http://${{values.app_name}}-dev.test.com/
       title: Hello World (dev)
       icon: web
-    - url: http://${{values.app_name}}-dev.test.com:9080/api/v1/info
+    - url: http://${{values.app_name}}-dev.test.com/api/v1/info
       title: Service Info
       icon: dashboard
-    - url: http://${{values.app_name}}-dev.test.com:9080/api/v1/healthz
+    - url: http://${{values.app_name}}-dev.test.com/api/v1/healthz
       title: Health Check
       icon: techdocs
 spec:

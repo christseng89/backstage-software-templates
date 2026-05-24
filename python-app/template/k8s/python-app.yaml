@@ -93,7 +93,7 @@ spec:
   ports:
     - name: http
       protocol: TCP
-      port: 8080
+      port: 5000
       targetPort: 5000
 
 ---
@@ -131,4 +131,4 @@ spec:
               service:
                 name: ${{values.app_name}}
                 port:
-                  number: 8080
+                  number: 5000
