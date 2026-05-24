@@ -148,7 +148,7 @@ cicd.yaml triggers automatically
   → builds christseng89/${{values.app_name}}:<sha>   (docker build + push)
   → writes <sha> into values-dev.yaml               (helm values update)
   → ArgoCD creates/syncs ${{values.app_name}}-dev   (helm install/upgrade)
-  → accessible at ${{values.app_name}}-dev.test.com
+  → accessible at ${{values.app_name}}-dev.test.com:9080
 ```
 
 ### 3. Promote to Staging — edit values-staging.yaml
@@ -176,7 +176,7 @@ git push origin main
 ```
 cd.yaml triggers automatically
   → ArgoCD creates/syncs ${{values.app_name}}-staging   (helm install/upgrade)
-  → accessible at ${{values.app_name}}-staging.test.com
+  → accessible at ${{values.app_name}}-staging.test.com:9080
 ```
 
 ### 4. Promote to Prod — edit values-prod.yaml
@@ -197,7 +197,7 @@ git push origin main
 ```
 cd.yaml triggers automatically
   → ArgoCD creates/syncs ${{values.app_name}}-prod   (helm install/upgrade)
-  → accessible at ${{values.app_name}}-prod.test.com
+  → accessible at ${{values.app_name}}-prod.test.com:9080
 ```
 
 > The image tag is the first 6 characters of the Git commit SHA (e.g. `a1b2c3`).
