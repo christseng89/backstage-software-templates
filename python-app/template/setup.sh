@@ -73,6 +73,7 @@ fi
 echo ""
 echo "=== Step 1: Register self-hosted runner ==="
 kubectl config use-context docker-desktop
+kubectl create namespace "${{values.app_name}}"
 kubectl apply -f runnerdeployment.yaml
 kubectl apply -f k8s/runner-rbac.yaml
 echo "Runner registered in namespace ${{values.app_name}}."
