@@ -1,8 +1,8 @@
 # ${{values.app_name}}
 
-This repo was scaffolded from the `python-app` Backstage template. Four manual steps
-are required before CI/CD will work. ArgoCD apps are created automatically on the
-first successful pipeline run.
+This repo was scaffolded from the `python-app` Backstage template.
+`setup.sh` handles all post-scaffolding setup — run it once after cloning.
+ArgoCD apps are created automatically on the first successful pipeline run.
 
 ---
 
@@ -24,18 +24,24 @@ christseng89/${{values.app_name}}/
 ├── Dockerfile
 ├── catalog-info.yaml                      ← Backstage component registration
 ├── runnerdeployment.yaml                  ← ARC self-hosted runner spec
-├── setup.sh                               ← automates post-scaffolding steps 1–4
+├── setup.sh                               ← automates all post-scaffolding steps
 └── mkdocs.yaml + docs/                    ← TechDocs source
 ```
 
 ---
 
-## Post-Scaffolding Steps
+## Admin Setup (run once after scaffolding)
 
-### Before You Begin — Create `.env`
+### 1. Clone and enter the repo
 
-`setup.sh` sources a `.env` file from the repo root before doing anything else.
-Create it now (Git Bash / WSL on Windows; Bash on Linux/macOS):
+```bash
+git clone https://github.com/christseng89/${{values.app_name}}.git
+cd ${{values.app_name}}
+```
+
+### 2. Create `.env`
+
+`setup.sh` sources this file before doing anything. Create it in the repo root:
 
 ```bash
 cat > .env <<'EOF'
@@ -52,110 +58,45 @@ GITHUB_PAT=your-github-personal-access-token   # needs repo scope
 EOF
 ```
 
-> `GH_PAT` (set from `GITHUB_PAT`) is used by the CD jobs to register this repo in
-> ArgoCD. Create one at GitHub → Settings → Developer settings → Personal access tokens
-> with **`repo`** scope.
-
 > `.env` is git-ignored — never commit it.
 
----
-
-> **TL;DR — run the setup script** (after creating `.env` and authenticating `gh`):
-> ```bash
-> gh auth login                 # one-time login if not already done
-> bash setup.sh                 # runs all four steps
-> bash setup.sh --skip-mirror   # skip step 4 if Docker Hub mirrors already exist
-> ```
-> The manual steps below document what the script does.
-
-### Step 1 — Register the Self-Hosted Runner
-
-Apply the runner deployment and RBAC to your local Docker Desktop Kubernetes cluster:
+### 3. Run setup.sh
 
 ```bash
-kubectl config use-context docker-desktop
-kubectl apply -f k8s/runner-rbac.yaml
-kubectl apply -f runnerdeployment.yaml
+gh auth login          # one-time, if not already authenticated
+bash setup.sh          # runs all steps and triggers the first CI/CD pipeline
 ```
 
-> `runner-rbac.yaml` creates the `${{values.app_name}}` namespace, grants the ARC
-> runner read access to pods and deployments, and must be applied first so the
-> namespace exists before the runner deployment is created.
-
-### Step 2 — Set GitHub Actions Secrets
-
-Source `.env` and push the secrets to this repo (Git Bash / WSL / Bash):
+Common flags:
 
 ```bash
-source .env
-gh secret set DOCKERHUB_USERNAME --body "$DOCKERHUB_USERNAME" --repo christseng89/${{values.app_name}}
-gh secret set DOCKERHUB_TOKEN    --body "$DOCKERHUB_TOKEN"    --repo christseng89/${{values.app_name}}
-gh secret set ARGOCD_PASSWORD    --body "$ARGOCD_PASSWORD"    --repo christseng89/${{values.app_name}}
-gh secret set GH_PAT             --body "$GITHUB_PAT"         --repo christseng89/${{values.app_name}}
-
-gh secret list --repo christseng89/${{values.app_name}}
+bash setup.sh --skip-mirror               # skip mirroring if Docker Hub images already exist
+bash setup.sh --skip-cicd                 # skip triggering the first pipeline run
+bash setup.sh --skip-mirror --skip-cicd
 ```
 
-> `source .env` is Bash-only — run in Git Bash or WSL on Windows.
+### 4. Add Windows hosts entry (manual — requires Administrator)
 
-### Step 3 — Set GitHub Actions Variables
+`setup.sh` cannot write to the Windows hosts file. Open **PowerShell as Administrator** and run:
 
-Set the tool versions as repository variables (used by all three workflows).
-`setup.sh` reads them from `.env` if set there, otherwise uses the defaults:
-
-```bash
-# Values used — override in .env with ARGOCD_VERSION / YQ_VERSION / KUBECTL_VERSION
-gh variable set ARGOCD_VERSION  --body "v3.4.2"  --repo christseng89/${{values.app_name}}
-gh variable set YQ_VERSION      --body "v4.44.3" --repo christseng89/${{values.app_name}}
-gh variable set KUBECTL_VERSION --body "v1.36.1" --repo christseng89/${{values.app_name}}
-
-gh variable list --repo christseng89/${{values.app_name}}
+```powershell
+Add-Content C:\Windows\System32\drivers\etc\hosts "127.0.0.1 ${{values.app_name}}-dev.test.com"
 ```
 
-> Variables (not secrets) are used for versions so `mirror-cli-binaries.yaml` can
-> update them automatically when you pass a version override as a workflow input.
+> `setup.sh` prints this command as a reminder. Skip if the entry already exists.
 
-### Step 4 — Mirror CLI Binaries to Docker Hub
+### 5. Verify
 
-Run once to push `argocd`, `yq`, and `kubectl` binaries to Docker Hub before the
-first CD run. Skip if the mirrors already exist from a previous repo on the same versions.
+Once the first pipeline run succeeds:
 
-```
-GitHub → ${{values.app_name}} → Actions → mirror-cli-binaries → Run workflow
-  argocd_version:  (leave blank to use ARGOCD_VERSION variable)
-  yq_version:      (leave blank to use YQ_VERSION variable)
-  kubectl_version: (leave blank to use KUBECTL_VERSION variable)
-```
+- ArgoCD dashboard: `http://argocd.test.com:9080/`
+- App (dev): `http://${{values.app_name}}-dev.test.com:9080/`
 
 ---
 
 ## Normal Workflow After Setup
 
-### 1. Clone the repo and start developing
-
-```bash
-git clone https://github.com/christseng89/${{values.app_name}}.git
-cd ${{values.app_name}}
-```
-
-Make changes to `src/`. To test locally before pushing:
-
-```bash
-# Build and run locally
-docker build -t ${{values.app_name}}:local .
-docker run -p 5000:5000 ${{values.app_name}}:local
-
-# Optional — tag and push manually to Docker Hub for ad-hoc testing
-docker tag ${{values.app_name}}:local christseng89/${{values.app_name}}:local
-docker push christseng89/${{values.app_name}}:local
-```
-
-> You do not run `docker build/push` or `helm install/upgrade` manually in the
-> normal GitOps flow. `cicd.yaml` handles the Docker build and push; ArgoCD
-> runs `helm upgrade --install` against Docker Desktop's k8s automatically
-> as part of every `app sync`.
-
-### 2. Deploy to Dev — push source changes
+### Deploy to Dev — push source changes
 
 ```bash
 git add src/
@@ -165,18 +106,17 @@ git push origin main
 
 ```
 cicd.yaml triggers automatically
-  → builds christseng89/${{values.app_name}}:<sha>   (docker build + push)
+  → builds christseng89/${{values.app_name}}:<sha>   (docker build + push to Docker Hub)
   → writes <sha> into values-dev.yaml               (helm values update)
-  → ArgoCD creates/syncs ${{values.app_name}}-dev   (helm install/upgrade)
+  → ArgoCD creates/syncs ${{values.app_name}}-dev   (helm upgrade --install)
   → accessible at ${{values.app_name}}-dev.test.com:9080
 ```
 
-### 3. Promote to Staging — edit values-staging.yaml
+### Promote to Staging
 
-Find the image tag to promote from Docker Hub or from `values-dev.yaml`:
+Find the image tag currently deployed in dev:
 
 ```bash
-# See what is currently running in dev
 grep tag charts/${{values.app_name}}/values-dev.yaml
 ```
 
@@ -184,7 +124,7 @@ Edit `charts/${{values.app_name}}/values-staging.yaml`:
 
 ```yaml
 image:
-  tag: a1b2c3    ← replace with the tag tested in dev
+  tag: a1b2c3    # replace with the tag tested in dev
 ```
 
 ```bash
@@ -195,17 +135,17 @@ git push origin main
 
 ```
 cd.yaml triggers automatically
-  → ArgoCD creates/syncs ${{values.app_name}}-staging   (helm install/upgrade)
+  → ArgoCD creates/syncs ${{values.app_name}}-staging
   → accessible at ${{values.app_name}}-staging.test.com:9080
 ```
 
-### 4. Promote to Prod — edit values-prod.yaml
+### Promote to Prod
 
 Edit `charts/${{values.app_name}}/values-prod.yaml`:
 
 ```yaml
 image:
-  tag: a1b2c3    ← replace with the tag validated in staging
+  tag: a1b2c3    # replace with the tag validated in staging
 ```
 
 ```bash
@@ -216,10 +156,87 @@ git push origin main
 
 ```
 cd.yaml triggers automatically
-  → ArgoCD creates/syncs ${{values.app_name}}-prod   (helm install/upgrade)
+  → ArgoCD creates/syncs ${{values.app_name}}-prod
   → accessible at ${{values.app_name}}-prod.test.com:9080
 ```
 
 > The image tag is the first 6 characters of the Git commit SHA (e.g. `a1b2c3`).
 > Git history on `values-staging.yaml` and `values-prod.yaml` is the full audit
 > trail of who promoted what version and when.
+
+---
+
+## Appendix: What setup.sh Does
+
+`setup.sh` runs the following six steps in order. The flags `--skip-mirror` and
+`--skip-cicd` skip steps 4 and 6 respectively.
+
+### Step 1 — Register the Self-Hosted Runner
+
+Applies the ARC runner and its RBAC to the local Docker Desktop Kubernetes cluster:
+
+```bash
+kubectl config use-context docker-desktop
+kubectl create namespace ${{values.app_name}}
+kubectl apply -f runnerdeployment.yaml
+kubectl apply -f k8s/runner-rbac.yaml
+```
+
+The namespace is created first so both manifests can be applied without ordering
+constraints. `runner-rbac.yaml` then creates the `arc-runner-reader` Role and
+RoleBinding inside it, granting the runner read access to pods and deployments.
+
+### Step 2 — Set GitHub Actions Secrets
+
+Sources `.env` and pushes four secrets to the repo:
+
+```bash
+gh secret set DOCKERHUB_USERNAME --body "$DOCKERHUB_USERNAME" --repo christseng89/${{values.app_name}}
+gh secret set DOCKERHUB_TOKEN    --body "$DOCKERHUB_TOKEN"    --repo christseng89/${{values.app_name}}
+gh secret set ARGOCD_PASSWORD    --body "$ARGOCD_PASSWORD"    --repo christseng89/${{values.app_name}}
+gh secret set GH_PAT             --body "$GITHUB_PAT"         --repo christseng89/${{values.app_name}}
+```
+
+`GH_PAT` (from `GITHUB_PAT`) is used by the CD jobs to register this repo in ArgoCD
+via `argocd repo add`. Create one at GitHub → Settings → Developer settings →
+Personal access tokens with **`repo`** scope.
+
+### Step 3 — Set GitHub Actions Variables
+
+Sets three tool-version variables used by all workflows:
+
+```bash
+gh variable set ARGOCD_VERSION  --body "$ARGOCD_VERSION"  --repo christseng89/${{values.app_name}}
+gh variable set YQ_VERSION      --body "$YQ_VERSION"       --repo christseng89/${{values.app_name}}
+gh variable set KUBECTL_VERSION --body "$KUBECTL_VERSION"  --repo christseng89/${{values.app_name}}
+```
+
+Defaults (`v3.4.2` / `v4.44.3` / `v1.36.1`) are used unless overridden in `.env`.
+Variables (not secrets) let `mirror-cli-binaries.yaml` update them automatically
+when a version override is passed as a workflow input.
+
+### Step 4 — Mirror CLI Binaries to Docker Hub
+
+Triggers `mirror-cli-binaries.yaml` via `gh workflow run` and watches it complete.
+This mirrors `argocd`, `yq`, and `kubectl` to Docker Hub as `FROM scratch` multi-arch
+images before the first CD run needs them.
+
+Skip with `--skip-mirror` if the mirrors already exist at the configured versions.
+
+### Step 5 — Add Windows Hosts Entry (printed only — cannot be automated)
+
+`setup.sh` prints the following command but cannot execute it (requires Administrator):
+
+```powershell
+Add-Content C:\Windows\System32\drivers\etc\hosts "127.0.0.1 ${{values.app_name}}-dev.test.com"
+```
+
+### Step 6 — Trigger the First CI/CD Run
+
+Triggers `${{values.app_name}}-cicd.yaml` via `gh workflow run` and watches it complete.
+The workflow: builds the Docker image (CI job on `ubuntu-latest`), pushes it to
+Docker Hub, writes the image tag into `values-dev.yaml`, then registers the GitHub
+repo in ArgoCD, creates the ArgoCD app if absent, and syncs it (CD job on the
+self-hosted ARC runner).
+
+Skip with `--skip-cicd` to trigger the pipeline manually later from the Actions tab.
